@@ -146,16 +146,22 @@
 
 /* Begin XCBuildConfiguration section */
 		B00000000000000000009020 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			}; name = Debug; };
 		B00000000000000000009021 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			}; name = Release; };
 		B00000000000000000009022 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -175,6 +181,8 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			}; name = Debug; };
 		B00000000000000000009023 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -194,6 +202,8 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			}; name = Release; };
 		B00000000000000000009024 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -204,6 +214,8 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PetCare360.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PetCare360";
 			}; name = Debug; };
 		B00000000000000000009025 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -214,6 +226,8 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PetCare360.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PetCare360";
 			}; name = Release; };
 		B00000000000000000009026 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -223,6 +237,8 @@
 				TEST_TARGET_NAME = PetCare360;
 			}; name = Debug; };
 		B00000000000000000009027 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
