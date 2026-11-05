@@ -433,8 +433,8 @@ struct SettingsView: View {
             Text("Reminders are switched on in the app, but iOS permission is off, so no reminders can be delivered. You can allow notifications in iOS Settings.")
         }
         .sheet(isPresented: $showImportPreview) {
-            if let pendingImport {
-                ImportPreviewView(source: pendingImport) { strategy in
+            if let importSource = pendingImport {
+                ImportPreviewView(source: importSource) { strategy in
                     confirmImport(strategy: strategy)
                 } onCancel: {
                     pendingImport = nil
@@ -465,12 +465,12 @@ struct SettingsView: View {
     }
 
     private func confirmImport(strategy: BackupService.RestoreStrategy) {
-        guard let pendingImport else { return }
+        guard let importToRestore = pendingImport else { return }
         defer {
             pendingImport = nil
             showImportPreview = false
         }
-        switch pendingImport {
+        switch importToRestore {
         case .v2(let backup):
             do {
                 let summary = try BackupService.restore(backup, into: context, strategy: strategy)
