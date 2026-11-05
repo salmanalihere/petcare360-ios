@@ -1092,6 +1092,7 @@ struct RecallsView: View {
     @Query private var brands: [SavedFoodBrand]
     @Query private var alerts: [RecallAlert]
     @State private var newBrand = ""
+    @State private var saveError = ""
     @AppStorage("recallLastCheckedEpoch") private var lastCheckedEpoch: Double = 0
     private var lastChecked: Date? { lastCheckedEpoch > 0 ? Date(timeIntervalSince1970: lastCheckedEpoch) : nil }
     var body: some View {
@@ -1111,7 +1112,7 @@ struct RecallsView: View {
                 Button("Mark FDA page checked now") { lastCheckedEpoch = Date().timeIntervalSince1970 }
             }
             Section("Your Saved Brands") {
-                ForEach(brands) { brand in Text(brand.brand) }
+                ForEach(brands, id: \.id) { brand in Text(brand.brand) }
                 HStack {
                     TextField("Brand to watch", text: $newBrand)
                     Button("Add") {
@@ -1131,7 +1132,7 @@ struct RecallsView: View {
                     Text("No recall entries saved. When the FDA publishes a recall affecting a brand you use, open it above and record it here from the official notice.")
                         .foregroundStyle(PCColor.secondaryText)
                 }
-                ForEach(alerts) { alert in
+                ForEach(alerts, id: \.id) { alert in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(alert.productName).font(.headline)
                         Text("\(alert.manufacturer) • \(alert.recallDate.formatted(date: .abbreviated, time: .omitted))").font(.caption)
