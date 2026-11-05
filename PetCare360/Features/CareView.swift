@@ -381,13 +381,15 @@ struct MedicationEditorView: View {
                             Text("Weekdays").font(.subheadline)
                             HStack(spacing: 6) {
                                 ForEach(1...7, id: \.self) { day in
-                                    Button(weekdayNames[day - 1]) {
-                                        if selectedWeekdays.contains(day) { selectedWeekdays.remove(day) }
+                                    let weekdayName = weekdayNames[day - 1]
+                                    let isSelected = selectedWeekdays.contains(day)
+                                    Button(weekdayName) {
+                                        if isSelected { selectedWeekdays.remove(day) }
                                         else { selectedWeekdays.insert(day) }
                                     }
                                     .buttonStyle(.bordered)
-                                    .tint(selectedWeekdays.contains(day) ? PCColor.freshGreen : PCColor.secondaryText)
-                                    .accessibilityLabel("\(weekdayNames[day - 1])\(selectedWeekdays.contains(day) ? ", selected" : "")")
+                                    .tint(isSelected ? PCColor.freshGreen : PCColor.secondaryText)
+                                    .accessibilityLabel(isSelected ? "\(weekdayName), selected" : weekdayName)
                                 }
                             }
                             if selectedWeekdays.isEmpty {
@@ -442,7 +444,7 @@ struct MedicationEditorView: View {
                 }
             }
             .navigationTitle(existing == nil ? "Add Medication" : "Edit Medication")
-            .alert("Couldn't save", isPresented: Binding(get: { !saveError.isEmpty }, set: { if !$0 { saveError = "" } })) { Button("OK", role: .cancel) {} } message: { Text(saveError) }
+            .alert("Couldn't save", isPresented: Binding(get: { !errorMessage.isEmpty }, set: { if !$0 { errorMessage = "" } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage) }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
