@@ -1,0 +1,39 @@
+workflows:
+  petcare360-ios:
+    name: PetCare360 iOS Simulator Build
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    environment:
+      xcode: latest
+
+    cache:
+      cache_paths:
+        - $HOME/Library/Caches/org.swift.swiftpm
+
+    scripts:
+      - name: Show build environment
+        script: |
+          xcodebuild -version
+          xcodebuild -list -project PetCare360.xcodeproj
+
+      - name: Resolve Swift package dependencies
+        script: |
+          xcodebuild -resolvePackageDependencies \
+            -project PetCare360.xcodeproj \
+            -scheme PetCare360
+
+      - name: Build PetCare360 for iOS Simulator
+        script: |
+          xcodebuild \
+            -project PetCare360.xcodeproj \
+            -scheme PetCare360 \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/ios/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+    artifacts:
+      - build/ios/DerivedData/Build/Products/Debug-iphonesimulator/*.app
+      - /tmp/xcodebuild_logs/*.log
