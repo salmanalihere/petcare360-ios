@@ -23,7 +23,7 @@ workflows:
           echo "=== PROJECT TARGETS ==="
           xcodebuild -list -project PetCare360.xcodeproj
           echo "=== APP BUILD SETTINGS ==="
-          xcodebuild -showBuildSettings -project PetCare360.xcodeproj -scheme PetCare360 | grep -E '(^| )SDKROOT =|SUPPORTED_PLATFORMS =|IPHONEOS_DEPLOYMENT_TARGET =|PRODUCT_TYPE ='
+          xcodebuild -showBuildSettings -project PetCare360.xcodeproj -scheme PetCare360 | grep -E '(^| )SDKROOT =|SUPPORTED_PLATFORMS =|IPHONEOS_DEPLOYMENT_TARGET =|PRODUCT_BUNDLE_IDENTIFIER =|MARKETING_VERSION =|CURRENT_PROJECT_VERSION ='
 
       - name: Resolve Swift package dependencies
         script: |
@@ -46,3 +46,60 @@ workflows:
     artifacts:
       - build/ios/DerivedData/Build/Products/Debug-iphonesimulator/*.app
       - /tmp/xcodebuild_logs/*.log
+
+  petcare360-testflight:
+    name: PetCare360 TestFlight IPA
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    integrations:
+      app_store_connect: Xenon
+
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.xenon-media.petcare360
+
+    cache:
+      cache_paths:
+        - $HOME/Library/Caches/org.swift.swiftpm
+
+    scripts:
+      - name: Show build configuration
+        script: |
+          echo "=== SOURCE REVISION ==="
+          git rev-parse HEAD
+          echo "=== XCODE VERSION ==="
+          xcodebuild -version
+          echo "=== PROJECT TARGETS ==="
+          xcodebuild -list -project PetCare360.xcodeproj
+          echo "=== VERSION SETTINGS ==="
+          xcodebuild -showBuildSettings -project PetCare360.xcodeproj -scheme PetCare360 | grep -E 'PRODUCT_BUNDLE_IDENTIFIER =|MARKETING_VERSION =|CURRENT_PROJECT_VERSION ='
+
+      - name: Resolve Swift package dependencies
+        script: |
+          xcodebuild -resolvePackageDependencies \
+            -project PetCare360.xcodeproj \
+            -scheme PetCare360
+
+      - name: Apply App Store signing profiles
+        script: |
+          xcode-project use-profiles
+
+      - name: Build signed IPA
+        script: |
+          xcode-project build-ipa \
+            --project PetCare360.xcodeproj \
+            --scheme PetCare360 \
+            --config Release
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
