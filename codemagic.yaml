@@ -14,8 +14,16 @@ workflows:
     scripts:
       - name: Show build environment
         script: |
+          echo "=== SOURCE REVISION ==="
+          git rev-parse HEAD
+          echo "=== XCODE VERSION ==="
           xcodebuild -version
+          echo "=== AVAILABLE SDKs ==="
+          xcodebuild -showsdks
+          echo "=== PROJECT TARGETS ==="
           xcodebuild -list -project PetCare360.xcodeproj
+          echo "=== APP BUILD SETTINGS ==="
+          xcodebuild -showBuildSettings -project PetCare360.xcodeproj -scheme PetCare360 | grep -E '(^| )SDKROOT =|SUPPORTED_PLATFORMS =|IPHONEOS_DEPLOYMENT_TARGET =|PRODUCT_TYPE ='
 
       - name: Resolve Swift package dependencies
         script: |
@@ -29,6 +37,7 @@ workflows:
             -project PetCare360.xcodeproj \
             -scheme PetCare360 \
             -configuration Debug \
+            -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/ios/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
