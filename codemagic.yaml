@@ -83,6 +83,10 @@ workflows:
             -project PetCare360.xcodeproj \
             -scheme PetCare360
 
+      - name: Generate App Store icon
+        script: |
+          bash scripts/generate_app_icon.sh
+
       - name: Apply App Store signing profiles
         script: |
           xcode-project use-profiles
