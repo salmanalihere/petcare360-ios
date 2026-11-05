@@ -176,7 +176,7 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.2.8;
-				PRODUCT_BUNDLE_IDENTIFIER = com.petcare360.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xenon-media.petcare360;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			}; name = Debug; };
@@ -197,7 +197,7 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.2.8;
-				PRODUCT_BUNDLE_IDENTIFIER = com.petcare360.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xenon-media.petcare360;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			}; name = Release; };
@@ -209,7 +209,7 @@
 				TARGETED_DEVICE_FAMILY = 1;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.petcare360.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xenon-media.petcare360.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PetCare360.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PetCare360";
 			}; name = Debug; };
@@ -221,7 +221,7 @@
 				TARGETED_DEVICE_FAMILY = 1;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.petcare360.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xenon-media.petcare360.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PetCare360.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PetCare360";
 			}; name = Release; };
@@ -232,7 +232,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.petcare360.app.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xenon-media.petcare360.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TEST_TARGET_NAME = PetCare360;
 			}; name = Debug; };
@@ -243,7 +243,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.petcare360.app.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xenon-media.petcare360.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TEST_TARGET_NAME = PetCare360;
 			}; name = Release; };
