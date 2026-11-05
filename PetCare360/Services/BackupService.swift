@@ -74,24 +74,25 @@ enum BackupService {
         var medicationSchedules: [ScheduleFull] = []
 
         var summary: [(String, Int)] {
-            [("Pets", pets.count),
-             ("Medications", pets.reduce(0) { $0 + $1.medications.count }),
-             ("Administrations", pets.reduce(0) { $0 + $1.administrations.count }),
-             ("Vaccinations", pets.reduce(0) { $0 + $1.vaccinations.count }),
-             ("Medical records", pets.reduce(0) { $0 + $1.medicalRecords.count }),
-             ("Documents", pets.reduce(0) { $0 + $1.documents.count }),
-             ("Appointments", pets.reduce(0) { $0 + $1.appointments.count }),
-             ("Observations", pets.reduce(0) { $0 + $1.observations.count }),
-             ("Expenses", pets.reduce(0) { $0 + $1.expenses.count }),
-             ("Feeding schedules", pets.reduce(0) { $0 + $1.foodSchedules.count }),
-             ("Insurance policies", insurancePolicies.count),
-             ("Households", households.count),
-             ("Care tasks", careTasks.count),
-             ("Care handoffs", careHandoffs.count),
-             ("Feeding logs", feedingLogs.count),
-             ("Emergency profiles", emergencyProfiles.count),
-             ("Saved brands", savedBrands.count)]
-            .filter { $0.1 > 0 }
+            var items: [(String, Int)] = []
+            items.append(("Pets", pets.count))
+            items.append(("Medications", pets.reduce(0) { total, pet in total + pet.medications.count }))
+            items.append(("Administrations", pets.reduce(0) { total, pet in total + pet.administrations.count }))
+            items.append(("Vaccinations", pets.reduce(0) { total, pet in total + pet.vaccinations.count }))
+            items.append(("Medical records", pets.reduce(0) { total, pet in total + pet.medicalRecords.count }))
+            items.append(("Documents", pets.reduce(0) { total, pet in total + pet.documents.count }))
+            items.append(("Appointments", pets.reduce(0) { total, pet in total + pet.appointments.count }))
+            items.append(("Observations", pets.reduce(0) { total, pet in total + pet.observations.count }))
+            items.append(("Expenses", pets.reduce(0) { total, pet in total + pet.expenses.count }))
+            items.append(("Feeding schedules", pets.reduce(0) { total, pet in total + pet.foodSchedules.count }))
+            items.append(("Insurance policies", insurancePolicies.count))
+            items.append(("Households", households.count))
+            items.append(("Care tasks", careTasks.count))
+            items.append(("Care handoffs", careHandoffs.count))
+            items.append(("Feeding logs", feedingLogs.count))
+            items.append(("Emergency profiles", emergencyProfiles.count))
+            items.append(("Saved brands", savedBrands.count))
+            return items.filter { $0.1 > 0 }
         }
     }
 
