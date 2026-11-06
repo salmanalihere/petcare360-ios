@@ -37,6 +37,29 @@ struct PetCare360App: App {
         try ModelContainer(for: appSchema(), configurations: [configuration])
     }
 
+    /// The explicit LOCAL configuration used by every fallback path.
+    ///
+    /// `cloudKitDatabase: .none` is load-bearing — do not remove it.
+    /// ModelConfiguration's cloudKitDatabase defaults to `.automatic`,
+    /// which engages CloudKit mirroring whenever the app binary is
+    /// entitled for iCloud. Since build 12 wired the CloudKit
+    /// entitlement into the signed app, an `.automatic` "local"
+    /// fallback on a real device runs the SAME CloudKit schema
+    /// validation as the primary configuration — and fails it
+    /// identically ("CloudKit integration requires that all
+    /// relationships be optional", Codemagic diagnostic build 4,
+    /// test C). That is why BOTH configurations threw
+    /// SwiftDataError 1 on device, even on a fresh install, while
+    /// the unsigned simulator tests (no entitlement in effect)
+    /// passed. `.none` makes this configuration local by
+    /// construction, independent of entitlements.
+    static func localConfiguration(schema: Schema, url: URL? = nil) -> ModelConfiguration {
+        if let url {
+            return ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)
+        }
+        return ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, cloudKitDatabase: .none)
+    }
+
     /// Storage opening ladder (build 13 recovery design):
     /// 1. CloudKit-backed store (when enabled in AppConfig).
     /// 2. Local store at the same default location.
@@ -60,7 +83,7 @@ struct PetCare360App: App {
                 errors.append(StorageDiagnostics.describe(error, prefix: "iCloud store:"))
             }
         }
-        let local = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let local = localConfiguration(schema: schema)
         do {
             return .ready(try ModelContainer(for: schema, configurations: [local]))
         } catch {
@@ -90,7 +113,7 @@ struct PetCare360App: App {
     /// The ONLY way a second wipe can happen — always user-initiated.
     private static func resetAndReopen() -> StorageState {
         let generation = StoreRecoveryLedger.beginNewGeneration()
-        let local = ModelConfiguration(schema: appSchema(), isStoredInMemoryOnly: false)
+        let local = localConfiguration(schema: appSchema())
         StoreFileWiper.wipeStoreFiles(at: local.url)
         let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         switch openStorage() {

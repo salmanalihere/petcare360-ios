@@ -47,6 +47,22 @@ SEPARATE block in the same file:
   disprove the device failure. Its chain is still captured for
   comparison against the device's error-screen chain.
 
+## v2 fix — "module built without '-enable-testing'" (2026-11-06)
+
+The first run failed in Build for testing: `@testable import
+PetCare360` needs the app module compiled with testing support.
+The workflow now passes **ENABLE_TESTABILITY=YES** as an
+xcodebuild argument (the Xcode project itself is unchanged), plus
+**ONLY_ACTIVE_ARCH=YES / ARCHS=arm64** so the app and test
+bundles use a single simulator architecture (no arm64/x86_64
+module mismatch). Gating: the build step uses pipefail, so if
+build-for-testing fails, Codemagic stops and NO test step runs —
+and each test step additionally checks the built
+PetCare360Tests.xctest exists before running, aborting loudly
+(a build failure, never a silent "skip"). If a run stops at
+Build for testing, download `01-build-for-testing.log` from the
+artifacts — publishing still happens on failure.
+
 ## What this workflow never does
 
 No IPA, no distribution signing, no TestFlight upload, no

@@ -153,3 +153,12 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 ## Recovery addendum (2026-11-06, build 13)
 - openStorage ladder: CloudKit → local → ONE-TIME per-generation wipe+retry (marked before retrying; no loop) → error screen with both errors + confirmed manual Reset (new generation). No in-memory fallback. New: Services/StoreRecovery.swift.
 - 6 new tests (policy/ledger/wiper/file-backed create-reopen-CRUD); total 143 written, ZERO executed. Parse 47/47 PASS both parsers; sweep ALL RESOLVE. Device/Xcode testing NOT performed. Details: docs/RECOVERY_REPORT.md.
+
+## Diagnostic addendum (2026-11-06, build 13 — no build bump)
+- Fresh-install failure refutes the file-state theory: creation-time failure in schema/config/environment. Full 23-model audit: no local-blocking defect found statically.
+- Instrumentation: Services/StorageDiagnostics.swift (full NSError chain) wired into all openStorage failure points; reset outcome line + progress in StorageErrorView.
+- 8 diagnostic test methods (A minimal / B full local / C CloudKit record-only / D1–D4 groups) — written, ZERO executed (no Xcode/SwiftData runtime here). Details + decision tree: docs/DIAGNOSTIC_REPORT_BUILD13.md.
+
+## Local-fallback addendum (2026-11-06, build 13)
+- Root cause CONFIRMED by executed Codemagic build 4: CloudKit validation "all relationships be optional" (11 to-many) + the fallback's cloudKitDatabase defaulting to .automatic, which re-engaged CloudKit on the entitled device build (unsigned simulator couldn't reproduce it).
+- Fix: PetCare360App.localConfiguration with cloudKitDatabase: .none used by openStorage fallback + resetAndReopen. Relationships/container/schema untouched. New test F (production-helper config: open/save/reopen) written, not executed here. Details: docs/LOCAL_FALLBACK_FIX_REPORT.md.
