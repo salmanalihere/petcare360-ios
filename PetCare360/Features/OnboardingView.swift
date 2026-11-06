@@ -12,8 +12,11 @@ struct OnboardingView: View {
         ("pills.fill", "Never miss a medication", "A shared administration log shows who gave each dose and when — so a dose is never given twice."),
         ("folder.fill", "A medical passport for every pet", "Vaccinations, records and documents, organised and ready to share with your veterinarian as a PDF."),
         ("person.3.fill", "Care together", "Household members, sitters and walkers are organised in one place on this device, with structured handoffs after every visit."),
-        ("bell.fill", "Gentle, useful reminders", "Medication, feeding, vaccination and refill reminders. We only ask for notification permission when you turn reminders on.")
+        ("bell.fill", "Gentle, useful reminders", "Medication, feeding, vaccination and refill reminders are on from the start. In a moment we'll ask for notification permission so iOS can deliver them.")
     ]
+
+    /// 5 content pages + icon personalization + sound personalization.
+    private var lastPage: Int { pages.count + 1 }
 
     var body: some View {
         VStack {
@@ -41,9 +44,13 @@ struct OnboardingView: View {
                     }
                     .tag(index)
                 }
+                OnboardingIconPage()
+                    .tag(pages.count)
+                OnboardingSoundPage()
+                    .tag(pages.count + 1)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
-            if page < pages.count - 1 {
+            if page < lastPage {
                 VStack(spacing: 12) {
                     Label("Swipe to explore", systemImage: "arrow.right")
                         .font(.caption.bold())
@@ -56,7 +63,7 @@ struct OnboardingView: View {
                 }
                 .padding(.bottom, 24)
             }
-            if page == pages.count - 1 {
+            if page == lastPage {
                 VStack(spacing: 12) {
                     TextField("Your name", text: $ownerName)
                         .textFieldStyle(.roundedBorder)

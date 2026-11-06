@@ -105,7 +105,12 @@ final class UserProfile {
     var memberID: UUID = UUID()
     var displayName: String = ""
     var email: String = ""
-    var remindersEnabled: Bool = false
+    /// Reminders are ON by default for new profiles (owner brief
+    /// 2026-11-07). This default only affects newly created profiles;
+    /// existing profiles keep whatever the user chose. iOS still
+    /// decides delivery — permission is requested during onboarding
+    /// and an in-app ON never implies iOS permission was granted.
+    var remindersEnabled: Bool = true
     var hasCompletedOnboarding: Bool = false
     var createdAt: Date = Date()
     init(displayName: String = "") {

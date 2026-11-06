@@ -51,10 +51,17 @@ final class PetCare360ReleaseTests: XCTestCase {
     }
 
     func testNewSpeciesSelectTheirSounds() {
-        XCTAssertEqual(PetSoundKind.forSpecies(.reptile), .reptile)
+        // Reptiles have NO bundled sound (owner instruction
+        // 2026-11-07): no kind, and resolution returns nil — the iOS
+        // system default — while animal sounds are on, whatever the
+        // bundled default selection is.
+        XCTAssertNil(PetSoundKind.forSpecies(.reptile))
         XCTAssertEqual(PetSoundKind.forSpecies(.horse), .horse)
+        XCTAssertNil(NotificationSoundPreferences.resolvedFileName(
+            species: .reptile, animalEnabled: true, defaultSelection: "chime"))
         XCTAssertEqual(NotificationSoundPreferences.resolvedFileName(
-            species: .reptile, animalEnabled: true, defaultSelection: "chime"), "petcare-reptile.wav")
+            species: .reptile, animalEnabled: false, defaultSelection: "chime"), "petcare-chime.wav",
+            "Animal sounds off -> the chosen default applies to every pet, reptiles included")
         XCTAssertEqual(NotificationSoundPreferences.resolvedFileName(
             species: .horse, animalEnabled: true, defaultSelection: "chime"), "petcare-horse.wav")
     }

@@ -89,4 +89,12 @@ enum EntitlementPolicy {
     static func canCreate(_ feature: PremiumFeature, isPremium: Bool) -> Bool {
         isPremium
     }
+    /// Full Premium access = a verified StoreKit entitlement OR an
+    /// active app-managed free trial (2026-11-07). A purchase is
+    /// never required for trial access and trial access never fakes
+    /// a purchase: `isPremium` stays purchase-only everywhere it is
+    /// reported as such (e.g. the paywall's purchase completion).
+    static func hasAccess(isPremium: Bool, trialActive: Bool) -> Bool {
+        isPremium || trialActive
+    }
 }

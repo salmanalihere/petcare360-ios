@@ -1,5 +1,6 @@
 import Foundation
 import StoreKit
+import Combine
 
 /// StoreKit 2 subscription manager.
 /// Entitlement comes ONLY from verified `Transaction.currentEntitlements`;
@@ -20,9 +21,29 @@ final class StoreManager: ObservableObject {
 
     private var updatesTask: Task<Void, Never>? = nil
 
+    /// The app-managed 7-day free trial (2026-11-07). Its start date
+    /// lives in the Keychain, so it survives reinstall on the same
+    /// device; see TrialManager for the stated limitations.
+    let trial = TrialManager()
+    private var trialCancellable: AnyCancellable? = nil
+
+    /// Purchase-only Premium, exactly as verified by StoreKit.
     var isPremium: Bool { !purchasedProductIDs.isEmpty }
 
+    /// What feature gates use: a verified purchase OR an active free
+    /// trial. During the trial every Premium feature works and no
+    /// upgrade prompt is shown, because every gate reads this.
+    var hasPremiumAccess: Bool {
+        EntitlementPolicy.hasAccess(isPremium: isPremium, trialActive: trial.isActive)
+    }
+
     init() {
+        // The trial starts at first launch (owner brief 2026-11-07):
+        // no purchase, no sign-up, no payment method.
+        trial.beginIfNeeded()
+        trialCancellable = trial.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         updatesTask = listenForTransactions()
         Task { await loadProducts(); await refreshEntitlements() }
     }
@@ -93,6 +114,7 @@ final class StoreManager: ObservableObject {
     }
 
     func refreshEntitlements() async {
+        trial.refresh()
         var active: Set<String> = []
         for await result in Transaction.currentEntitlements {
             guard let transaction = try? checkVerified(result) else { continue }

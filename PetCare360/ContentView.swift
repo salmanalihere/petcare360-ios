@@ -7,6 +7,8 @@ struct ContentView: View {
     @Query private var allSchedules: [MedicationSchedule]
     @Query private var allPolicies: [InsurancePolicy]
     @State private var didInitialReminderSync = false
+    @State private var showTrialExpiredPaywall = false
+    @State private var didPresentTrialExpired = false
     @StateObject private var store = StoreManager()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -34,6 +36,17 @@ struct ContentView: View {
         }
         .environmentObject(store)
         .background(PCColor.warmIvory)
+        .sheet(isPresented: $showTrialExpiredPaywall) { PaywallView().environmentObject(store) }
+        .onAppear {
+            // Trial expired (2026-11-07): show the subscription
+            // screen ONCE per launch. It is dismissible and locks
+            // nothing — the free plan keeps working underneath.
+            if hasOnboarded, !didPresentTrialExpired,
+               case .expired = store.trial.state, !store.isPremium {
+                didPresentTrialExpired = true
+                showTrialExpiredPaywall = true
+            }
+        }
         .onAppear {
             // Initial-launch replenishment (v1.2.3): scenePhase changes
             // cover foreground returns, but the first launch is handled

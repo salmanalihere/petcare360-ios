@@ -1,38 +1,45 @@
 import Foundation
 import AVFoundation
 
-/// Bundled notification sounds (2026-11-06). Every file is an
-/// ORIGINAL synthesized tone created for PetCare 360 — no recordings
-/// and no third-party audio — shipped in the app bundle root, which
-/// is where iOS looks for custom local-notification sounds. Files
-/// are short WAV (a format iOS supports for notification sounds,
-/// well under the 30-second system limit).
+/// Bundled notification sounds (sounds replaced 2026-11-07 with
+/// recordings supplied by the app owner: real dog bark, cat, bird,
+/// rabbit and horse recordings, converted from the supplied files
+/// to WAV — a format iOS supports for notification sounds, well
+/// under the 30-second system limit). Files ship in the app bundle
+/// root, which is where iOS looks for custom local-notification
+/// sounds. The ONLY synthesized file is `petcare-chime.wav`, the
+/// app's own neutral default — it is not an animal sound.
+/// Reptiles deliberately have NO bundled sound (the owner supplied
+/// none and instructed that reptiles use the iOS system default),
+/// and "Other" pets have no species sound either.
 enum PetSoundKind: String, CaseIterable {
-    case dog, cat, bird, rabbit, reptile, horse, chime
+    case dog, cat, bird, rabbit, horse, chime
 
     var fileName: String { "petcare-\(rawValue).wav" }
 
     var label: String {
         switch self {
-        case .dog: return "Dog — friendly woof"
-        case .cat: return "Cat — gentle meow"
-        case .bird: return "Bird — soft chirps"
-        case .rabbit: return "Rabbit — soft thump"
-        case .reptile: return "Reptile — calm nature chime"
-        case .horse: return "Horse — soft whinny"
+        case .dog: return "Dog — bark recording"
+        case .cat: return "Cat — meow recording"
+        case .bird: return "Bird — song recording"
+        case .rabbit: return "Rabbit — recording"
+        case .horse: return "Horse — neigh recording"
         case .chime: return "PetCare 360 chime (default)"
         }
     }
 
     /// The sound kind for a pet species, or nil when the species has
-    /// no dedicated sound (the user's default then applies).
+    /// no dedicated sound. Reptiles return nil by the owner's
+    /// instruction — reptile reminders use the iOS system default
+    /// sound (see `resolvedFileName`). "Other" also returns nil, so
+    /// the user's default sound applies to those pets.
     static func forSpecies(_ species: PetSpecies) -> PetSoundKind? {
         switch species {
         case .dog: return .dog
         case .cat: return .cat
         case .bird: return .bird
         case .rabbit: return .rabbit
-        case .reptile: return .reptile
+        case .reptile: return nil
         case .horse: return .horse
         case .other: return nil
         }
@@ -92,8 +99,14 @@ enum NotificationSoundPreferences {
     /// use, or nil for the iOS system default sound. Pure given the
     /// two preference values, so it is unit-testable.
     static func resolvedFileName(species: PetSpecies?, animalEnabled: Bool, defaultSelection: String) -> String? {
-        if animalEnabled, let species, let kind = PetSoundKind.forSpecies(species) {
-            return kind.fileName
+        if animalEnabled, let species {
+            // Owner's instruction (2026-11-07): reptiles have no
+            // supplied recording, so their reminders always use the
+            // iOS system default sound while animal sounds are on.
+            if species == .reptile { return nil }
+            if let kind = PetSoundKind.forSpecies(species) {
+                return kind.fileName
+            }
         }
         if defaultSelection == systemDefaultValue { return nil }
         return (PetSoundKind(rawValue: defaultSelection) ?? .chime).fileName

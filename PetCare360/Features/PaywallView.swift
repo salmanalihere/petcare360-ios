@@ -61,6 +61,23 @@ struct PaywallView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    if store.trial.isActive {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Free trial — \(store.trial.daysRemaining) day\(store.trial.daysRemaining == 1 ? "" : "s") left", systemImage: "gift.fill")
+                                .font(.headline).foregroundStyle(PCColor.deepTeal)
+                            Text("You already have full Premium access until \(store.trial.endsAt?.formatted(date: .abbreviated, time: .omitted) ?? ""). Subscribing now starts billing when you confirm — the trial itself never charges you.")
+                                .font(.subheadline).foregroundStyle(PCColor.secondaryText)
+                        }
+                        .pcCard()
+                    } else if !store.isPremium, case .expired = store.trial.state {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Your 7-day free trial has ended")
+                                .font(.headline).foregroundStyle(PCColor.deepTeal)
+                            Text("Subscribe to keep the Premium features. Your pets, records and documents are all still here — nothing was deleted, and viewing, editing and exporting what you already have is never locked.")
+                                .font(.subheadline).foregroundStyle(PCColor.secondaryText)
+                        }
+                        .pcCard()
+                    }
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Unlock More. Care Better. Love More.")
                             .font(.title.bold()).foregroundStyle(PCColor.charcoal)
