@@ -99,14 +99,14 @@ enum NotificationSoundPreferences {
     /// use, or nil for the iOS system default sound. Pure given the
     /// two preference values, so it is unit-testable.
     static func resolvedFileName(species: PetSpecies?, animalEnabled: Bool, defaultSelection: String) -> String? {
-        if animalEnabled, let species {
-            // Owner's instruction (2026-11-07): reptiles have no
-            // supplied recording, so their reminders always use the
-            // iOS system default sound while animal sounds are on.
-            if species == .reptile { return nil }
-            if let kind = PetSoundKind.forSpecies(species) {
-                return kind.fileName
-            }
+        // Owner's requirement (2026-11-07, confirmed in review):
+        // reptiles ALWAYS use the iOS system default sound — no
+        // supplied recording exists, and neither the animal-sounds
+        // toggle nor the selected default sound may change that.
+        // This check therefore comes FIRST, before every other rule.
+        if species == .reptile { return nil }
+        if animalEnabled, let species, let kind = PetSoundKind.forSpecies(species) {
+            return kind.fileName
         }
         if defaultSelection == systemDefaultValue { return nil }
         return (PetSoundKind(rawValue: defaultSelection) ?? .chime).fileName

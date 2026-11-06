@@ -300,3 +300,20 @@ EXECUTED, until that log exists.
   entitlement refresh and transaction updates exactly as before).
 - petcare360-clean-release untouched; nothing merged; build number
   still 14; Build 15 not started.
+
+## 8. Reptile sound rule — correction (2026-11-07 review)
+The owner clarified: reptiles must ALWAYS use the iOS system
+default sound, regardless of the animal-sounds toggle or the
+selected default sound. The first version returned nil only when
+animal sounds were enabled; with them disabled, a reptile reminder
+could fall through to the selected default. Fixed:
+`resolvedFileName` now returns nil for `.reptile` FIRST, before
+every other rule. All scheduling paths use this one function, so
+no other notification behaviour changed. Coverage:
+`testReptilesAlwaysUseSystemDefaultSound` checks the full matrix
+(animal on/off × chime/cat/dog/system selections → always nil)
+plus control cases proving dog/horse/other resolution is
+unchanged; the older contradicting assertion in
+`testNewSpeciesSelectTheirSounds` was corrected. (The audio
+section above is superseded on this one point: "animal sounds
+off → default applies" no longer holds for reptiles.)
