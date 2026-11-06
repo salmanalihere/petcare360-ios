@@ -107,3 +107,167 @@ workflows:
         auth: integration
         submit_to_testflight: true
         submit_to_app_store: false
+
+  petcare360-storage-diagnostics:
+    name: PetCare 360 · Storage Diagnostics
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: "PetCare360.xcodeproj"
+        XCODE_SCHEME: "PetCare360"
+        DIAG_DIR: "build/diagnostics"
+        DERIVED_DATA: "build/DerivedData"
+    scripts:
+      - name: Toolchain + simulator inventory
+        script: |
+          mkdir -p "$DIAG_DIR"
+          { xcodebuild -version; echo; xcrun simctl list devices available; } \
+            | tee "$DIAG_DIR/00-toolchain.log"
+      - name: Select an available iPhone simulator
+        script: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          candidates = [dev for runtime, devs in data['devices'].items()
+                        if 'iOS' in runtime
+                        for dev in devs
+                        if dev.get('isAvailable') and 'iPhone' in dev.get('name', '')]
+          print(candidates[0]['udid'] if candidates else '')")
+          if [ -z "$UDID" ]; then
+            echo 'ERROR: no available iPhone simulator on this image' | tee "$DIAG_DIR/00-toolchain.log"
+            exit 1
+          fi
+          echo "SIM_UDID=$UDID" >> $CM_ENV
+          echo "Selected simulator UDID: $UDID"
+          xcrun simctl boot "$UDID" || true
+      - name: Build for testing (simulator, no signing)
+        script: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$DIAG_DIR/01-build-for-testing.log"
+      - name: Test A — minimal schema (local)
+        script: |
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testA_MinimalSchemaLocalCreateSaveReopen \
+            -resultBundlePath "$DIAG_DIR/A.xcresult" \
+            2>&1 | tee "$DIAG_DIR/A.log"
+          echo "testA exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Test B — full schema (local)
+        script: |
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testB_FullSchemaLocalCreateSaveReopen \
+            -resultBundlePath "$DIAG_DIR/B.xcresult" \
+            2>&1 | tee "$DIAG_DIR/B.log"
+          echo "testB exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Test D1 — PetCore group
+        script: |
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD1_PetCoreGroup \
+            -resultBundlePath "$DIAG_DIR/D1.xcresult" \
+            2>&1 | tee "$DIAG_DIR/D1.log"
+          echo "testD1 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Test D2 — Insurance group
+        script: |
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD2_InsuranceGroup \
+            -resultBundlePath "$DIAG_DIR/D2.xcresult" \
+            2>&1 | tee "$DIAG_DIR/D2.log"
+          echo "testD2 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Test D3 — Household group
+        script: |
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD3_HouseholdGroup \
+            -resultBundlePath "$DIAG_DIR/D3.xcresult" \
+            2>&1 | tee "$DIAG_DIR/D3.log"
+          echo "testD3 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Test D4 — Standalone group
+        script: |
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD4_StandaloneGroup \
+            -resultBundlePath "$DIAG_DIR/D4.xcresult" \
+            2>&1 | tee "$DIAG_DIR/D4.log"
+          echo "testD4 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Test E — default vs explicit store location (record-only)
+        script: |
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testE_DefaultVsExplicitStoreLocation_RecordOnly \
+            -resultBundlePath "$DIAG_DIR/E.xcresult" \
+            2>&1 | tee "$DIAG_DIR/E.log"
+          echo "testE exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Test C — CloudKit attempt (separate, record-only, EXPECTED to be limited in simulator)
+        script: |
+          # The simulator build is unsigned (CODE_SIGNING_ALLOWED=NO)
+          # and has no iCloud account or CloudKit provisioning, so a
+          # failure here does NOT prove the device failure — and a
+          # pass would not prove device success either. The value of
+          # this step is the captured NSError chain in C.log.
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testC_FullSchemaCloudKitAttempt_RecordOnly \
+            -resultBundlePath "$DIAG_DIR/C.xcresult" \
+            2>&1 | tee "$DIAG_DIR/C.log"
+          echo "testC exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
+      - name: Summary — outcomes + NSError chains
+        script: |
+          {
+            echo '================ DIAGNOSTIC SUMMARY ================'
+            cat "$DIAG_DIR/exit-codes.txt" 2>/dev/null || true
+            echo
+            for f in A B D1 D2 D3 D4 E C; do
+              echo "--- $f ---"
+              grep -E "Test Case .* (passed|failed)" "$DIAG_DIR/$f.log" 2>/dev/null || echo '(no test-case line found — see log)'
+            done
+            echo
+            echo '================ NSError chains captured ================'
+            grep -h -A 30 'DIAGNOSTIC' "$DIAG_DIR"/*.log 2>/dev/null || echo '(no chains captured)'
+          } | tee "$DIAG_DIR/99-summary.log"
+          true
+    artifacts:
+      - build/diagnostics/*.log
+      - build/diagnostics/*.txt
+      - build/diagnostics/*.xcresult

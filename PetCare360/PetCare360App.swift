@@ -57,14 +57,14 @@ struct PetCare360App: App {
             do {
                 return .ready(try ModelContainer(for: schema, configurations: [cloud]))
             } catch {
-                errors.append("iCloud store: \(error.localizedDescription)")
+                errors.append(StorageDiagnostics.describe(error, prefix: "iCloud store:"))
             }
         }
         let local = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
             return .ready(try ModelContainer(for: schema, configurations: [local]))
         } catch {
-            errors.append("Local store: \(error.localizedDescription)")
+            errors.append(StorageDiagnostics.describe(error, prefix: "Local store:"))
         }
         // Step 3 — bounded one-time recovery. Owner confirmed
         // 2026-11-06 that all existing records are demo/test data.
@@ -78,7 +78,7 @@ struct PetCare360App: App {
             do {
                 return .ready(try ModelContainer(for: schema, configurations: [local]))
             } catch {
-                errors.append("After one-time reset: \(error.localizedDescription)")
+                errors.append(StorageDiagnostics.describe(error, prefix: "After one-time reset:"))
                 errors.append("A one-time database reset was performed and the store still could not be opened.")
             }
         }
@@ -89,10 +89,16 @@ struct PetCare360App: App {
     /// store generation, removes the local store files, and reopens.
     /// The ONLY way a second wipe can happen — always user-initiated.
     private static func resetAndReopen() -> StorageState {
-        StoreRecoveryLedger.beginNewGeneration()
+        let generation = StoreRecoveryLedger.beginNewGeneration()
         let local = ModelConfiguration(schema: appSchema(), isStoredInMemoryOnly: false)
         StoreFileWiper.wipeStoreFiles(at: local.url)
-        return openStorage()
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        switch openStorage() {
+        case .ready(let container):
+            return .ready(container)
+        case .failed(let message):
+            return .failed("Reset ran at \(stamp) (store generation \(generation)): local database files were removed and reopening was retried. It still failed — the problem is not the database files. Full error:\n" + message)
+        }
     }
 
     var body: some Scene {
@@ -119,6 +125,7 @@ struct StorageErrorView: View {
     let onRetry: () -> Void
     let onReset: () -> Void
     @State private var confirmingReset = false
+    @State private var isWorking = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -132,15 +139,25 @@ struct StorageErrorView: View {
                 .font(.subheadline)
                 .foregroundStyle(PCColor.secondaryText)
                 .multilineTextAlignment(.center)
-            Button("Try Again") { onRetry() }
-                .buttonStyle(.borderedProminent)
-                .tint(PCColor.freshGreen)
+            if isWorking {
+                ProgressView("Working…")
+            }
+            Button("Try Again") {
+                isWorking = true
+                Task { await Task.yield(); onRetry() }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(PCColor.freshGreen)
+            .disabled(isWorking)
             Button("Reset Database", role: .destructive) { confirmingReset = true }
                 .buttonStyle(.bordered)
                 .confirmationDialog("Reset the database?",
                                     isPresented: $confirmingReset,
                                     titleVisibility: .visible) {
-                    Button("Delete Local Data and Restart Fresh", role: .destructive) { onReset() }
+                    Button("Delete Local Data and Restart Fresh", role: .destructive) {
+                        isWorking = true
+                        Task { await Task.yield(); onReset() }
+                    }
                     Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("This deletes the PetCare database stored on this device. Data in your iCloud account is not deleted.")
