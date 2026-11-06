@@ -102,6 +102,10 @@ final class VetAppointment {
     var questions: String = ""        // one question per line
     var followUpDate: Date? = nil
     var isCompleted: Bool = false
+    /// Cancellation is a status, not a deletion (2026-11-06):
+    /// cancelled appointments stay in the record but never appear
+    /// as upcoming and never keep a reminder.
+    var isCancelled: Bool = false
     var pet: Pet? = nil
     init(title: String, date: Date) {
         self.id = UUID()

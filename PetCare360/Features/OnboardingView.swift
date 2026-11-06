@@ -17,6 +17,15 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack {
+            HStack {
+                Spacer()
+                Button("Skip") { finish() }
+                    .font(.subheadline.bold())
+                    .foregroundStyle(PCColor.secondaryText)
+                    .accessibilityLabel("Skip tutorial")
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 8)
             TabView(selection: $page) {
                 ForEach(Array(pages.enumerated()), id: \.offset) { index, item in
                     VStack(spacing: 20) {
@@ -33,7 +42,20 @@ struct OnboardingView: View {
                     .tag(index)
                 }
             }
-            .tabViewStyle(.page)
+            .tabViewStyle(.page(indexDisplayMode: .always))
+            if page < pages.count - 1 {
+                VStack(spacing: 12) {
+                    Label("Swipe to explore", systemImage: "arrow.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(PCColor.freshGreen)
+                        .accessibilityLabel("Swipe to explore")
+                    PCPrimaryButton(title: "Next") {
+                        withAnimation { page += 1 }
+                    }
+                    .padding(.horizontal, 24)
+                }
+                .padding(.bottom, 24)
+            }
             if page == pages.count - 1 {
                 VStack(spacing: 12) {
                     TextField("Your name", text: $ownerName)

@@ -1,6 +1,6 @@
 # StoreKit Setup
 
-Products (create these in App Store Connect under bundle `com.petcare360.app`):
+Products (create these in App Store Connect under bundle `com.xenon-media.petcare360`):
 
 | Product ID | Type | Target US price |
 |---|---|---|

@@ -9,7 +9,14 @@ final class StoreManager: ObservableObject {
     @Published private(set) var products: [Product] = []
     @Published private(set) var purchasedProductIDs: Set<String> = []
     @Published private(set) var isLoading = false
+    /// True once a product load has been attempted at least once, so the
+    /// paywall can distinguish "still loading" from "loaded but empty".
+    @Published private(set) var hasAttemptedLoad = false
+    /// Product-loading failures ONLY (kept separate from purchase
+    /// errors so the paywall's states never mix them up).
+    @Published private(set) var loadError: String? = nil
     @Published var purchaseError: String? = nil
+    @Published var infoMessage: String? = nil
 
     private var updatesTask: Task<Void, Never>? = nil
 
@@ -24,16 +31,31 @@ final class StoreManager: ObservableObject {
 
     func loadProducts() async {
         isLoading = true
-        defer { isLoading = false }
+        loadError = nil
+        defer { isLoading = false; hasAttemptedLoad = true }
         do {
+            // NOTE: Product.products(for:) returns an EMPTY array (it
+            // does not throw) when none of the requested identifiers
+            // are available for this app/Apple ID — e.g. the products
+            // do not exist in App Store Connect yet, the Paid Apps
+            // agreement is not active, or the build has no StoreKit
+            // configuration. The paywall renders that as its own
+            // "no plans available" state with a working Retry, never
+            // as an endless loading loop.
             products = try await Product.products(for: PremiumProduct.all)
                 .sorted { $0.price < $1.price }
         } catch {
-            purchaseError = "Could not load subscription options. Please try again later."
+            loadError = "Subscription plans could not be loaded. Please check your connection and try again."
         }
     }
 
-    func purchase(_ product: Product) async {
+    /// Returns true only when a verified transaction left the user
+    /// with an active Premium entitlement. Premium is NEVER unlocked
+    /// by a tap alone, a pending approval, or an unverified result.
+    @discardableResult
+    func purchase(_ product: Product) async -> Bool {
+        purchaseError = nil
+        infoMessage = nil
         do {
             let result = try await product.purchase()
             switch result {
@@ -41,20 +63,30 @@ final class StoreManager: ObservableObject {
                 let transaction = try checkVerified(verification)
                 await refreshEntitlements()
                 await transaction.finish()
-            case .userCancelled, .pending:
-                break
+                return isPremium
+            case .userCancelled:
+                return false
+            case .pending:
+                infoMessage = "Your purchase is pending approval. Premium unlocks automatically once it is approved."
+                return false
             @unknown default:
-                break
+                return false
             }
         } catch {
             purchaseError = "Purchase did not complete. You have not been charged."
+            return false
         }
     }
 
     func restorePurchases() async {
+        purchaseError = nil
+        infoMessage = nil
         do {
             try await AppStore.sync()
             await refreshEntitlements()
+            if !isPremium {
+                infoMessage = "No active Premium subscription was found for this Apple ID."
+            }
         } catch {
             purchaseError = "Restore did not complete. Please check your connection and try again."
         }

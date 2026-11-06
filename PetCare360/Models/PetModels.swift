@@ -2,14 +2,25 @@ import Foundation
 import SwiftData
 
 enum PetSpecies: String, Codable, CaseIterable {
-    case dog, cat, bird, rabbit, other
-    var label: String { rawValue.capitalized }
+    // Raw values are STORED identifiers (speciesRaw in the database,
+    // backups and CloudKit) — existing cases must never be renamed.
+    // reptile/horse added 2026-11-06 with new raw values only.
+    case dog, cat, bird, rabbit, reptile, horse, other
+    var label: String {
+        switch self {
+        case .reptile: return "Reptiles"
+        case .horse: return "Horses"
+        default: return rawValue.capitalized
+        }
+    }
     var icon: String {
         switch self {
         case .dog: return "dog"
         case .cat: return "cat"
         case .bird: return "bird"
         case .rabbit: return "hare"
+        case .reptile: return "lizard"
+        case .horse: return "horse"
         case .other: return "pawprint"
         }
     }
