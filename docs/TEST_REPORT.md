@@ -143,3 +143,6 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 
 ## Predicate-fix addendum (2026-11-06)
 - PetDeletionService.cancelAllReminders: pet.id captured as local petID before the InsurancePolicy #Predicate (Xcode 26.6 macro failure). Project-wide predicate audit: the other 4 fetches already used the pattern; all @Query filters capture nothing. Diff = +1 line, 1 line changed. Parse PASS. Details: docs/PREDICATE_FIX_REPORT.md.
+
+## Build-12 addendum (2026-11-06)
+- CURRENT_PROJECT_VERSION 11 → 12 (app target Debug+Release only; pbxproj diff = exactly 2 lines). MARKETING_VERSION stays 1.2.8; bundle IDs unchanged; generated CFBundleVersion = 12. Details: docs/BUILD12_REPORT.md.
