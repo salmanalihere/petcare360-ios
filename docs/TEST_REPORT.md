@@ -146,3 +146,6 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 
 ## Build-12 addendum (2026-11-06)
 - CURRENT_PROJECT_VERSION 11 → 12 (app target Debug+Release only; pbxproj diff = exactly 2 lines). MARKETING_VERSION stays 1.2.8; bundle IDs unchanged; generated CFBundleVersion = 12. Details: docs/BUILD12_REPORT.md.
+
+## Icon-fix addendum (2026-11-06)
+- All 8 appiconset Contents.json → universal/platform ios 1024 format (was iphone/1x — the 90713+90022 root cause); INFOPLIST_KEY_CFBundleIconName=AppIcon added to app target only (pbx diff = 2 lines). Icons verified 1024x1024 RGB no-alpha. Build stays 12 for the retry. scripts/generate_app_icon.sh is repo-side, not in this package. Details: docs/ICON_FIX_REPORT.md.
