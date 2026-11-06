@@ -303,6 +303,26 @@ workflows:
             2>&1 | tee "$DIAG_DIR/E.log"
           echo "testE exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
+      - name: Test F — production local fallback (explicit .none)
+        script: |
+          set +e
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testF_ExplicitLocalFallbackOpensSavesReopens \
+            -resultBundlePath "$DIAG_DIR/F.xcresult" \
+            2>&1 | tee "$DIAG_DIR/F.log"
+          echo "testF exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
+          true
       - name: Test C — CloudKit attempt (separate, record-only, simulator-limited)
         script: |
           set +e
@@ -329,7 +349,7 @@ workflows:
             echo '================ DIAGNOSTIC SUMMARY ================'
             cat "$DIAG_DIR/exit-codes.txt" 2>/dev/null || true
             echo
-            for f in A B D1 D2 D3 D4 E C; do
+            for f in A B D1 D2 D3 D4 E F C; do
               echo "--- $f ---"
               grep -E "Test Case .* (passed|failed)" "$DIAG_DIR/$f.log" 2>/dev/null || echo '(no test-case line found — see log)'
             done
