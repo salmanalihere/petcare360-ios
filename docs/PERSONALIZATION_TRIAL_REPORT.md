@@ -188,3 +188,115 @@ committed with GitHub Desktop (they are also in the ZIP):
 (petcare-dog/cat/bird/rabbit/horse.wav), and the deletion of
 petcare-reptile.wav. Do not merge to `petcare360-clean-release`
 without the owner's approval.
+
+---
+
+# Review addendum (2026-11-07, owner's pre-Build-15 review)
+
+## 1. Existing-user migration policy (FIXED)
+Problem confirmed: the first version started a trial for ANY
+install with no Keychain date — including existing users upgrading
+from build 14, who would silently have received a fresh trial.
+Policy implemented: the trial is for new users of this build.
+- StoreManager no longer begins the trial at init.
+- ContentView resolves the trial exactly once, when it can read the
+  store: if a UserProfile already exists, the install is an
+  upgrading existing user → a migration sentinel (1970-01-01) is
+  recorded in the Keychain and the state is `.notApplicable` — no
+  trial starts, no "trial ended" UI ever shows for them, and the
+  trial-expired paywall never appears. A failed store read defers
+  the decision to the next foreground return instead of guessing.
+- If no profile exists → the trial begins (genuine new install).
+- A recorded decision is never re-decided (tests cover relaunch,
+  reinstall ordering, and trial-started-then-data-exists).
+- Purchases and data are untouched: resolution only counts
+  profiles; entitlement still comes solely from verified StoreKit
+  transactions.
+
+## 2. Keychain failure handling (FIXED)
+- `TrialDateStore.saveStartDate` now returns Bool; the Keychain
+  store returns the real SecItem status.
+- `beginIfNeeded()` activates the trial ONLY after the start date
+  is written AND read back (≤1s tolerance). On failure: state stays
+  `.notStarted`, `persistenceFailed` is raised — no phantom trial.
+- Tests with an injectable failing store cover write failure,
+  read-back failure, and migration with a failing store.
+
+## 3. Exactly what happens after day 7
+- The trial state becomes .expired. Once per launch, the
+  subscription screen is presented (dismissible — the free plan
+  keeps working underneath; during the trial nothing was shown).
+- NEVER gated (before, during, after the trial): viewing, editing
+  and deleting every existing record; medication logging and
+  history; care tasks and handoffs; feeding logs; the emergency
+  screen; the full JSON backup export in Settings; all reminders.
+- Premium-only again (creation / premium workflows only): adding a
+  pet beyond the 1 free profile; restoring an archived pet beyond
+  the free limit; adding a caregiver; document scanning (new
+  scans); filing insurance claims and adding policies; adding an
+  expense; saving recall brands; advanced health charts (the
+  underlying weight history itself stays fully visible — only the
+  chart rendering is Premium, as designed in v1.2.4); Emergency QR
+  setup; two branded PDF exports (Visit Preparation PDF, Expense
+  Report PDF) — these two were Premium features long before the
+  trial existed; the free JSON backup export is unaffected. If the
+  owner wants those PDFs free, that is a product decision to make
+  explicitly — it was NOT changed here.
+- Nothing is deleted at expiry; subscribing (Monthly $4.99 /
+  Yearly $29.99) or restoring a purchase reopens everything
+  immediately.
+
+## 4. Icon verification (against the owner's original files)
+Pixel comparison of each packaged 1024×1024 app icon against the
+supplied originals (pet artwork composited on white, compared at
+512×512): mean absolute error 0.22–0.34 out of 255 for all seven
+pet icons — resampling noise only; the artwork is the owner's,
+unmodified. The default icon is a PIXEL-EXACT downscale (MAE 0.0)
+of default_icon.png composited on its own green. Registration:
+every appiconset has a Contents.json naming its 1024 PNG;
+ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES is set, so
+Xcode generates CFBundleAlternateIcons from the 7 alternate
+appiconsets; AppIconOption alternate names match the appiconset
+names exactly (test-covered). Final confirmation inside a SIGNED
+app requires the actool asset compilation in a real build
+(Codemagic/device checklist below) — it cannot be inspected from
+source alone, and is not claimed here.
+
+## 5. Audio verification
+All six WAVs are in the target's Resources phase of the pbxproj
+(bundle root, where UNNotificationSound looks): petcare-dog/cat/
+bird/rabbit/horse.wav + petcare-chime.wav. Durations match the
+owner's MP3 originals to <0.02s (1.03/2.04/2.53/4.65/2.52s; chime
+0.95s); all 22050 Hz mono 16-bit WAV, far under the 30s limit.
+Mapping: dog/cat/bird/rabbit/horse → their recordings; reptile →
+nil → UNNotificationSound .default (iOS system default), verified
+in NotificationService (two scheduling sites pass the resolved
+filename as UNNotificationSoundName, nil → .default); "other" →
+the user's chosen default. Filenames are produced by
+PetSoundKind.fileName ("petcare-<kind>.wav") — the same names the
+scheduler resolves (test-covered, incl. bundle presence).
+
+## 6. Tests
+No Codemagic workflow ran the full suite (petcare360-ios builds
+only; the diagnostics workflow runs selected storage tests). A new
+workflow `petcare360-full-tests` was ADDED to codemagic.yaml on
+this branch only: build-for-testing + test-without-building with
+NO -only-testing filter, full log + xcresult as artifacts, and a
+summary step quoting the real "Executed N tests" lines. It must be
+run from Codemagic on this branch; NO test result is reported here
+— the suite (now 17 trial tests incl. migration + Keychain-failure
+coverage, plus all pre-existing suites) remains WRITTEN, NOT
+EXECUTED, until that log exists.
+
+## 7. Release safety (verified)
+- localConfiguration keeps cloudKitDatabase: .none at both call
+  sites (PetCare360App.swift lines 58/60); openStorage ladder
+  unchanged.
+- No CloudKit relationship or schema change: HouseholdModels.swift
+  is byte-identical to petcare360-clean-release; the only model
+  change in this whole feature is the remindersEnabled DEFAULT for
+  new profiles (a default, not a relationship or schema change).
+- StoreKit verification untouched (checkVerified gates purchase,
+  entitlement refresh and transaction updates exactly as before).
+- petcare360-clean-release untouched; nothing merged; build number
+  still 14; Build 15 not started.

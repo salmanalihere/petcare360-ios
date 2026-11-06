@@ -38,9 +38,12 @@ final class StoreManager: ObservableObject {
     }
 
     init() {
-        // The trial starts at first launch (owner brief 2026-11-07):
-        // no purchase, no sign-up, no payment method.
-        trial.beginIfNeeded()
+        // The trial is NOT begun here: StoreManager exists before
+        // the app knows whether this install already holds an
+        // existing user's data. ContentView resolves the trial once
+        // (TrialManager.resolveInitialState) — new installs start
+        // their 7 days, upgrading users are recorded as migrated
+        // and silently get no trial.
         trialCancellable = trial.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }

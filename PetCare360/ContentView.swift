@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query private var profiles: [UserProfile]
     @Query private var allPets: [Pet]
     @Query private var allSchedules: [MedicationSchedule]
@@ -48,13 +49,9 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            // Initial-launch replenishment (v1.2.3): scenePhase changes
-            // cover foreground returns, but the first launch is handled
-            // explicitly here. The pass is idempotent (stale requests are
-            // removed, identifiers are deterministic), and the flag stops
-            // the launch-time scenePhase event from running it twice.
             guard !didInitialReminderSync else { return }
             didInitialReminderSync = true
+            resolveTrialOnce()
             syncReminders()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -63,12 +60,29 @@ struct ContentView: View {
             // verified StoreKit entitlements whenever we come back.
             if phase == .active {
                 Task { await store.refreshEntitlements() }
+                // Trial resolution retry: if the first launch could
+                // not read the store (fetch error), decide on the
+                // next foreground return instead of guessing.
+                resolveTrialOnce()
                 // Rolling reminder replenishment: rebuild the next 7 days
                 // of medication reminders every time the app comes to the
                 // foreground (v1.2.2 — no editor visit required).
                 syncReminders()
             }
         }
+    }
+
+    /// One-time trial resolution (migration policy, 2026-11-07):
+    /// if a user profile already exists in the store, this install
+    /// belongs to an existing user upgrading from a version without
+    /// a trial — record the migration, do NOT start a trial. Only a
+    /// genuinely new install begins the 7 days. A failed fetch
+    /// defers the decision (retried on foreground) rather than
+    /// guessing in either direction.
+    private func resolveTrialOnce() {
+        guard !store.trial.hasRecordedDecision else { return }
+        guard let count = try? modelContext.fetchCount(FetchDescriptor<UserProfile>()) else { return }
+        store.trial.resolveInitialState(hasExistingData: count > 0)
     }
 
     /// One idempotent reminder-sync entry point used by initial launch

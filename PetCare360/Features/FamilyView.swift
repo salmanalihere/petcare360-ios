@@ -486,8 +486,13 @@ struct SettingsView: View {
                         .foregroundStyle(PCColor.freshGreen)
                     Text("Every Premium feature is unlocked during your trial. No payment is due and nothing will be charged when it ends.")
                         .font(.caption).foregroundStyle(PCColor.secondaryText)
-                } else {
+                } else if store.trial.state == .expired {
                     Text("Your free trial has ended. Your pets and records are all still here — subscribing unlocks the Premium features again.")
+                        .font(.caption).foregroundStyle(PCColor.secondaryText)
+                } else {
+                    // Includes migrated existing users (.notApplicable):
+                    // they never had a trial, so nothing claims one ended.
+                    Text("You're on the free plan. Premium unlocks unlimited pets, household coordination, scanning, advanced charts and PDF exports.")
                         .font(.caption).foregroundStyle(PCColor.secondaryText)
                 }
                 Button("Premium Subscription") { showPaywall = true }

@@ -362,3 +362,81 @@ workflows:
       - build/diagnostics/*.log
       - build/diagnostics/*.txt
       - build/diagnostics/*.xcresult
+
+  petcare360-full-tests:
+    name: PetCare 360 · Full Test Suite
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: "PetCare360.xcodeproj"
+        XCODE_SCHEME: "PetCare360"
+        TEST_DIR: "build/full-tests"
+        DERIVED_DATA: "build/DerivedData"
+    scripts:
+      - name: Toolchain + simulator inventory
+        script: |
+          mkdir -p "$TEST_DIR"
+          {
+            xcodebuild -version
+            echo
+            xcrun simctl list devices available
+          } 2>&1 | tee "$TEST_DIR/00-toolchain.log"
+      - name: Select an available iPhone simulator
+        script: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          candidates = [dev for runtime, devs in data['devices'].items()
+                        if 'iOS' in runtime
+                        for dev in devs
+                        if dev.get('isAvailable') and 'iPhone' in dev.get('name', '')]
+          print(candidates[0]['udid'] if candidates else '')")
+          if [ -z "$UDID" ]; then
+            echo 'ERROR: no available iPhone simulator on this image' | tee "$TEST_DIR/00-toolchain.log"
+            exit 1
+          fi
+          echo "SIM_UDID=$UDID" >> "$CM_ENV"
+          echo "Selected simulator UDID: $UDID"
+          xcrun simctl boot "$UDID" || true
+      - name: Build for testing (simulator, no signing, testability ON)
+        script: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_TESTABILITY=YES \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            2>&1 | tee "$TEST_DIR/01-build-for-testing.log"
+      - name: Run the COMPLETE unit test suite (no -only-testing filter)
+        script: |
+          set -o pipefail
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath "$TEST_DIR/FullSuite.xcresult" \
+            2>&1 | tee "$TEST_DIR/02-full-tests.log"
+      - name: Summary — executed counts from the real log
+        script: |
+          {
+            echo '================ FULL TEST SUMMARY ================'
+            grep -E "Test Suite '.*' (passed|failed)" "$TEST_DIR/02-full-tests.log" 2>/dev/null || echo '(no suite lines — see log)'
+            grep -E "Executed [0-9]+ tests" "$TEST_DIR/02-full-tests.log" 2>/dev/null | tail -3 || true
+            grep -E "Test Case .* failed" "$TEST_DIR/02-full-tests.log" 2>/dev/null || echo '(no failed test-case lines)'
+          } | tee "$TEST_DIR/99-summary.log"
+          true
+    artifacts:
+      - build/full-tests/*.log
+      - build/full-tests/*.xcresult

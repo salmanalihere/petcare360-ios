@@ -1,12 +1,14 @@
 import XCTest
 @testable import PetCare360
 
-/// Trial + personalization tests (owner brief 2026-11-07).
-/// The trial is exercised through an in-memory date store and a
+/// Trial + personalization tests (owner brief 2026-11-07; migration
+/// and Keychain-failure coverage added in the 2026-11-07 review).
+/// The trial is exercised through injectable date stores and a
 /// controllable clock, so no test touches the real Keychain and the
 /// 7-day boundary is checked exactly. These tests are WRITTEN here;
 /// like every PetCare 360 test they can only RUN under Xcode on a
-/// Mac — this build environment has no Xcode.
+/// Mac / Codemagic — this build environment has no Xcode, and no
+/// result is claimed until a real test log exists.
 final class PetCare360TrialTests: XCTestCase {
 
     private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
@@ -76,6 +78,107 @@ final class PetCare360TrialTests: XCTestCase {
         XCTAssertTrue(EntitlementPolicy.hasAccess(isPremium: true, trialActive: true))
         XCTAssertFalse(EntitlementPolicy.hasAccess(isPremium: false, trialActive: false),
                        "No purchase and no active trial means free plan — never a silent unlock")
+    }
+
+    // MARK: Migration policy (existing users upgrading)
+
+    func testExistingUserGetsNoTrialOnUpgrade() {
+        let store = InMemoryTrialDateStore()
+        let trial = makeManager(store: store, now: t0)
+        trial.resolveInitialState(hasExistingData: true)
+        XCTAssertEqual(trial.state, .notApplicable)
+        XCTAssertFalse(trial.isActive)
+        XCTAssertEqual(store.loadStartDate(), TrialManager.migratedSentinel,
+                       "The migration decision itself is recorded, so it is never re-decided")
+    }
+
+    func testMigrationDecisionSurvivesRelaunch() {
+        let store = InMemoryTrialDateStore()
+        makeManager(store: store, now: t0).resolveInitialState(hasExistingData: true)
+        let relaunched = makeManager(store: store, now: t0.addingTimeInterval(30 * 86400))
+        XCTAssertEqual(relaunched.state, .notApplicable,
+                       "A migrated user must never flip to .expired (different UI, and a trial they never had)")
+        relaunched.resolveInitialState(hasExistingData: false)
+        XCTAssertEqual(relaunched.state, .notApplicable,
+                       "Once recorded, resolution never starts a trial afterwards")
+    }
+
+    func testNewUserResolutionStartsTrial() {
+        let store = InMemoryTrialDateStore()
+        let trial = makeManager(store: store, now: t0)
+        trial.resolveInitialState(hasExistingData: false)
+        XCTAssertTrue(trial.isActive)
+        XCTAssertEqual(trial.daysRemaining, 7)
+    }
+
+    func testRecordedTrialIsNeverReResolvedAsMigration() {
+        // A new user who started a trial and later has data must keep
+        // the trial — resolution order protects the recorded date.
+        let store = InMemoryTrialDateStore()
+        makeManager(store: store, now: t0).beginIfNeeded()
+        let later = makeManager(store: store, now: t0.addingTimeInterval(86400))
+        later.resolveInitialState(hasExistingData: true)
+        XCTAssertTrue(later.isActive)
+        XCTAssertEqual(later.daysRemaining, 6)
+        XCTAssertEqual(store.loadStartDate(), t0)
+    }
+
+    func testMigratedUserWithPurchaseKeepsFullAccess() {
+        // Migration touches only the trial; a verified purchase wins
+        // exactly as before.
+        XCTAssertTrue(EntitlementPolicy.hasAccess(isPremium: true, trialActive: false))
+    }
+
+    // MARK: Keychain failure handling (injectable failing store)
+
+    /// A store whose reads/writes can be failed independently,
+    /// standing in for Keychain error paths.
+    private final class FakeTrialDateStore: TrialDateStore {
+        var stored: Date?
+        var failWrites = false
+        var failReads = false
+        func loadStartDate() -> Date? { failReads ? nil : stored }
+        @discardableResult
+        func saveStartDate(_ date: Date) -> Bool {
+            if failWrites { return false }
+            stored = date
+            return true
+        }
+    }
+
+    func testWriteFailureNeverReportsActiveTrial() {
+        let store = FakeTrialDateStore()
+        store.failWrites = true
+        let trial = TrialManager(store: store, now: { self.t0 })
+        trial.beginIfNeeded()
+        XCTAssertEqual(trial.state, .notStarted,
+                       "An unpersisted start date must not produce a trial")
+        XCTAssertFalse(trial.isActive)
+        XCTAssertTrue(trial.persistenceFailed)
+    }
+
+    func testReadBackFailureNeverReportsActiveTrial() {
+        // Writes "succeed" but nothing can be read back (e.g. the
+        // Keychain item is unreadable): the verification read-back
+        // must refuse to activate the trial.
+        let store = FakeTrialDateStore()
+        store.failReads = true
+        let trial = TrialManager(store: store, now: { self.t0 })
+        trial.beginIfNeeded()
+        XCTAssertEqual(trial.state, .notStarted)
+        XCTAssertFalse(trial.isActive)
+        XCTAssertTrue(trial.persistenceFailed)
+    }
+
+    func testMigrationWithFailingStoreStillGrantsNoTrial() {
+        let store = FakeTrialDateStore()
+        store.failWrites = true
+        let trial = TrialManager(store: store, now: { self.t0 })
+        trial.resolveInitialState(hasExistingData: true)
+        XCTAssertEqual(trial.state, .notApplicable)
+        XCTAssertFalse(trial.isActive)
+        XCTAssertTrue(trial.persistenceFailed,
+                      "The failed sentinel write is reported, not hidden")
     }
 
     // MARK: Personalization integrity
