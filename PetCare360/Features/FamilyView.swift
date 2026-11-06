@@ -2,8 +2,51 @@ import SwiftUI
 import SwiftData
 import UIKit
 
+extension HouseholdRole {
+    /// Plain-language description of what the role usually does,
+    /// shown on the care-team cards and the Roles & Permissions
+    /// screen (owner brief 2026-11-07).
+    var summary: String {
+        switch self {
+        case .owner: return "Full control of the household, pets and records on this device."
+        case .family: return "Helps with records, medication and daily care."
+        case .petSitter: return "Gives medication, completes care tasks and logs visits."
+        case .dogWalker: return "Completes walks and care tasks, and logs activity."
+        case .viewer: return "Can view pet information on this device."
+        }
+    }
+}
+
+extension CarePermission {
+    var label: String {
+        switch self {
+        case .managePets: return "Manage pet profiles"
+        case .manageRecords: return "Manage medical records"
+        case .giveMedication: return "Give & log medication"
+        case .completeCare: return "Complete care tasks"
+        case .logActivity: return "Log activities & handoffs"
+        case .viewOnly: return "View information"
+        }
+    }
+}
+
+/// Family tab root (2026-11-07 redesign): "Family & Care Team".
 struct FamilyView: View {
+    var body: some View {
+        NavigationStack {
+            CareTeamView()
+        }
+    }
+}
+
+/// The care-team screen itself, without a navigation stack, so
+/// Settings can also link to it. Models, persistence, the permission
+/// matrix and the premium gate are unchanged from the previous
+/// Family screen — only the presentation and the removal
+/// confirmation are new.
+struct CareTeamView: View {
     @EnvironmentObject private var store: StoreManager
+    @Environment(\.modelContext) private var context
     @Query private var households: [Household]
     @Query private var profiles: [UserProfile]
     @Query private var handoffs: [CareHandoff]
@@ -11,10 +54,16 @@ struct FamilyView: View {
     @State private var showPremiumAlert = false
     @State private var resumeAddMember = false
     @State private var showMemberEditor = false
+    @State private var memberPendingRemoval: HouseholdMember? = nil
     @State private var handoffToDelete: CareHandoff? = nil
     @State private var deleteError = ""
 
     private var household: Household? { households.first }
+    private var sortedMembers: [HouseholdMember] {
+        household?.members.sorted { $0.displayName < $1.displayName } ?? []
+    }
+    private var ownerMember: HouseholdMember? { sortedMembers.first { $0.role == .owner } }
+    private var careTeam: [HouseholdMember] { sortedMembers.filter { $0.role != .owner } }
     private var myRole: HouseholdRole {
         // Resolved by stable member ID, never by display name (Phase 2 G).
         // No match -> Viewer (read-only), never accidental full access.
@@ -22,110 +71,178 @@ struct FamilyView: View {
         return HouseholdIdentity.resolveRole(memberID: profile.memberID,
                                              members: household?.members ?? []) ?? .viewer
     }
+    private var canManage: Bool { HouseholdPermissions.can(myRole, do: .managePets) }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section("Household") {
-                    if !store.isPremium {
-                        Text("Household coordination is a Premium feature and unlocks when you subscribe.")
-                            .font(.subheadline).foregroundStyle(PCColor.secondaryText)
-                        Button("See Premium") { showPaywall = true }
-                    }
-                    ForEach(household?.members.sorted { $0.displayName < $1.displayName } ?? []) { member in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(member.displayName).foregroundStyle(PCColor.charcoal)
-                                Text("\(member.role.label)\(member.isInvitationPending ? " • Local record" : "")\(member.hasActiveAccess ? "" : " • Access inactive/expired")")
-                                    .font(.caption).foregroundStyle(PCColor.secondaryText)
-                            }
-                            Spacer()
-                            if HouseholdPermissions.can(myRole, do: .managePets) && member.role != .owner {
-                                Button("Remove", role: .destructive) { remove(member) }
-                                    .font(.caption)
-                            }
-                        }
-                    }
-                    if HouseholdPermissions.can(myRole, do: .managePets) {
-                        Button("Add member") { if store.isPremium { showMemberEditor = true } else { resumeAddMember = true; showPremiumAlert = true } }
-                    }
-                }
-                Section("Roles on this device") {
-                    Text("Roles organise who usually does what in this household's records on THIS device. They are not separate accounts, there is no member sign-in, and they do not lock anyone out of this shared device — treat them as care organisation, not access control.")
-                        .font(.caption).foregroundStyle(PCColor.secondaryText)
-                    ForEach(HouseholdRole.allCases, id: \.self) { role in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(role.label).font(.subheadline.bold())
-                            Text(HouseholdPermissions.permissions(for: role).map { $0.rawValue }.sorted().joined(separator: ", "))
-                                .font(.caption).foregroundStyle(PCColor.secondaryText)
-                        }
-                    }
-                    Text("Roles help organise household responsibilities. Everyone using this device may be able to access the information stored in the app — roles are not separate accounts and do not restrict access on this shared device.")
-                        .font(.caption).foregroundStyle(PCColor.secondaryText)
-                }
-                Section("Care Handoffs") {
-                    if handoffs.isEmpty { Text("No handoffs yet.").foregroundStyle(PCColor.secondaryText) }
-                    ForEach(handoffs.sorted { $0.date > $1.date }.prefix(10)) { handoff in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(handoff.petName) — \(handoff.authorName)").font(.subheadline).foregroundStyle(PCColor.charcoal)
-                            Text(handoff.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(PCColor.secondaryText)
-                            Text([handoff.wasFed ? "Fed" : nil, handoff.medicationGiven ? "Medication given" : nil,
-                                  handoff.walkCompleted ? "Walked" : nil, handoff.appetiteNormal ? "Appetite normal" : "Appetite NOT normal"]
-                                .compactMap { $0 }.joined(separator: " • ")).font(.caption)
-                            if !handoff.unusualBehavior.isEmpty { Text("Unusual: \(handoff.unusualBehavior)").font(.caption) }
-                            if !handoff.notes.isEmpty { Text(handoff.notes).font(.caption) }
-                            Button("Delete handoff", role: .destructive) { handoffToDelete = handoff }
-                                .font(.caption)
-                        }
-                    }
-                }
-                Section("App") {
-                    NavigationLink("Emergency profiles") { EmergencyListView() }
-                    NavigationLink("Settings & data") { SettingsView() }
-                    Button("PetCare 360 Premium") { showPaywall = true }
-                    if store.isPremium {
-                        Label("Premium active", systemImage: "checkmark.seal.fill").foregroundStyle(PCColor.freshGreen)
-                    }
-                }
-                Section {
-                    Text(AppConfig.medicalDisclaimer).font(.caption).foregroundStyle(PCColor.secondaryText)
+        List {
+            Section {
+                Text("Manage everyone who helps care for your pets.")
+                    .font(.subheadline).foregroundStyle(PCColor.secondaryText)
+                if store.trial.isActive {
+                    Label("Free trial — \(store.trial.daysRemaining) day\(store.trial.daysRemaining == 1 ? "" : "s") left. Every feature is unlocked.", systemImage: "gift.fill")
+                        .font(.subheadline).foregroundStyle(PCColor.freshGreen)
+                } else if !store.hasPremiumAccess {
+                    Text("Household coordination is a Premium feature and unlocks when you subscribe.")
+                        .font(.subheadline).foregroundStyle(PCColor.secondaryText)
+                    Button("See Premium") { showPaywall = true }
                 }
             }
-            .navigationTitle("Family")
-            .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .householdMembers) { showPaywall = true }
-            .sheet(isPresented: $showPaywall, onDismiss: {
-                if store.isPremium, resumeAddMember { resumeAddMember = false; showMemberEditor = true }
-            }) { PaywallView() }
-            .sheet(isPresented: $showMemberEditor) { MemberEditorView() }
-            .alert("Delete this handoff?", isPresented: Binding(
-                get: { handoffToDelete != nil },
-                set: { if !$0 { handoffToDelete = nil } }
-            )) {
-                Button("Cancel", role: .cancel) { handoffToDelete = nil }
-                Button("Delete", role: .destructive) {
-                    if let handoffToDelete {
-                        context.delete(handoffToDelete)
-                        do { try context.save() } catch {
-                            context.rollback()
-                            deleteError = "This handoff could not be deleted. That could not be saved on this device, so nothing was changed. Please try again."
-                        }
-                    }
-                    handoffToDelete = nil
+            if let ownerMember {
+                Section("Owner") {
+                    memberCard(ownerMember, removable: false)
                 }
-            } message: { Text("This care handoff will be permanently deleted.") }
-            .alert("Couldn't delete", isPresented: Binding(get: { !deleteError.isEmpty }, set: { if !$0 { deleteError = "" } })) {
-                Button("OK", role: .cancel) {}
-            } message: { Text(deleteError) }
+            }
+            Section("Your Care Team") {
+                if careTeam.isEmpty {
+                    Text("No caregivers added yet. Add the family members, sitters and walkers who help with your pets.")
+                        .font(.subheadline).foregroundStyle(PCColor.secondaryText)
+                }
+                ForEach(careTeam) { member in
+                    memberCard(member, removable: canManage)
+                }
+            }
+            if canManage {
+                Section {
+                    Button {
+                        if store.hasPremiumAccess { showMemberEditor = true } else { resumeAddMember = true; showPremiumAlert = true }
+                    } label: {
+                        Label("Add Caregiver", systemImage: "person.badge.plus")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(PCColor.freshGreen)
+                    .listRowBackground(Color.clear)
+                }
+            }
+            Section("Care Handoffs") {
+                if handoffs.isEmpty { Text("No handoffs yet.").foregroundStyle(PCColor.secondaryText) }
+                ForEach(handoffs.sorted { $0.date > $1.date }.prefix(10)) { handoff in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(handoff.petName) — \(handoff.authorName)").font(.subheadline).foregroundStyle(PCColor.charcoal)
+                        Text(handoff.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(PCColor.secondaryText)
+                        Text([handoff.wasFed ? "Fed" : nil, handoff.medicationGiven ? "Medication given" : nil,
+                              handoff.walkCompleted ? "Walked" : nil, handoff.appetiteNormal ? "Appetite normal" : "Appetite NOT normal"]
+                            .compactMap { $0 }.joined(separator: " • ")).font(.caption)
+                        if !handoff.unusualBehavior.isEmpty { Text("Unusual: \(handoff.unusualBehavior)").font(.caption) }
+                        if !handoff.notes.isEmpty { Text(handoff.notes).font(.caption) }
+                        Button("Delete handoff", role: .destructive) { handoffToDelete = handoff }
+                            .font(.caption)
+                    }
+                }
+            }
+            Section("More") {
+                NavigationLink("Roles & Permissions") { RolesPermissionsView() }
+                NavigationLink("Emergency profiles") { EmergencyListView() }
+                NavigationLink("Settings & data") { SettingsView() }
+                Button("PetCare 360 Premium") { showPaywall = true }
+                if store.isPremium {
+                    Label("Premium active", systemImage: "checkmark.seal.fill").foregroundStyle(PCColor.freshGreen)
+                }
+            }
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Shared device", systemImage: "iphone")
+                        .font(.subheadline.bold()).foregroundStyle(PCColor.charcoal)
+                    Text("Care team members are records in your household notebook on this device. They are not separate accounts, nothing is sent to them, and they cannot see this information from their own devices.")
+                        .font(.caption).foregroundStyle(PCColor.secondaryText)
+                }
+            }
+            Section {
+                Text(AppConfig.medicalDisclaimer).font(.caption).foregroundStyle(PCColor.secondaryText)
+            }
         }
+        .navigationTitle("Family & Care Team")
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .householdMembers) { showPaywall = true }
+        .sheet(isPresented: $showPaywall, onDismiss: {
+            if store.hasPremiumAccess, resumeAddMember { resumeAddMember = false; showMemberEditor = true }
+        }) { PaywallView() }
+        .sheet(isPresented: $showMemberEditor) { MemberEditorView() }
+        .confirmationDialog("Remove Family Member?", isPresented: Binding(
+            get: { memberPendingRemoval != nil },
+            set: { if !$0 { memberPendingRemoval = nil } }
+        ), presenting: memberPendingRemoval) { member in
+            Button("Remove Member", role: .destructive) {
+                memberPendingRemoval = nil
+                remove(member)
+            }
+            Button("Cancel", role: .cancel) { memberPendingRemoval = nil }
+        } message: { member in
+            Text("Are you sure you want to remove \(member.displayName) from your household? They will no longer be listed as a household caregiver on this device.")
+        }
+        .alert("Delete this handoff?", isPresented: Binding(
+            get: { handoffToDelete != nil },
+            set: { if !$0 { handoffToDelete = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { handoffToDelete = nil }
+            Button("Delete", role: .destructive) {
+                if let handoffToDelete {
+                    context.delete(handoffToDelete)
+                    do { try context.save() } catch {
+                        context.rollback()
+                        deleteError = "This handoff could not be deleted. That could not be saved on this device, so nothing was changed. Please try again."
+                    }
+                }
+                handoffToDelete = nil
+            }
+        } message: { Text("This care handoff will be permanently deleted.") }
+        .alert("Couldn't delete", isPresented: Binding(get: { !deleteError.isEmpty }, set: { if !$0 { deleteError = "" } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(deleteError) }
     }
 
-    @Environment(\.modelContext) private var context
+    private func memberCard(_ member: HouseholdMember, removable: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(member.displayName).font(.headline).foregroundStyle(PCColor.charcoal)
+                Text(member.role.label).font(.subheadline.bold()).foregroundStyle(PCColor.deepTeal)
+                Text(member.role.summary).font(.caption).foregroundStyle(PCColor.secondaryText)
+                Text("\(member.isInvitationPending ? "Local record" : "Caregiver")\(member.hasActiveAccess ? "" : " • Access inactive/expired")")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+            }
+            Spacer()
+            if removable {
+                Button("Remove", role: .destructive) { memberPendingRemoval = member }
+                    .font(.caption)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     private func remove(_ member: HouseholdMember) {
         context.delete(member)
         do { try context.save() } catch {
             context.rollback()
             deleteError = "That member could not be removed. That could not be saved on this device, so nothing was changed. Please try again."
         }
+    }
+}
+
+/// Roles & Permissions: what each role on this device usually does,
+/// in plain language. Roles organise care on a shared device — they
+/// are not accounts and do not lock anyone out of this device.
+struct RolesPermissionsView: View {
+    var body: some View {
+        List {
+            Section {
+                Text("Roles organise who usually does what in this household's records on THIS device. They are not separate accounts, there is no member sign-in, and they do not lock anyone out of this shared device — treat them as care organisation, not access control.")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+            }
+            ForEach(HouseholdRole.allCases, id: \.self) { role in
+                Section(role.label) {
+                    Text(role.summary).font(.subheadline).foregroundStyle(PCColor.charcoal)
+                    ForEach(HouseholdPermissions.permissions(for: role).sorted { $0.label < $1.label }, id: \.self) { permission in
+                        Label(permission.label, systemImage: "checkmark.circle")
+                            .font(.subheadline)
+                    }
+                }
+            }
+            Section {
+                Text("Everyone using this device may be able to access the information stored in the app — roles do not restrict access on a shared device.")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+            }
+        }
+        .navigationTitle("Roles & Permissions")
     }
 }
 
@@ -225,7 +342,7 @@ struct EmergencyView: View {
                 }
                 if !pet.notes.isEmpty { emergencyRow("Emergency notes", pet.notes) }
                 Section {
-                    if store.isPremium {
+                    if store.hasPremiumAccess {
                         Button("Emergency QR profile settings") { showQRSetup = true }
                         if let profile, profile.isEnabled {
                             let payload = EmergencyService.payload(pet: pet, profile: profile, medications: pet.medications)
@@ -324,6 +441,8 @@ struct EmergencyQRSetupView: View {
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var store: StoreManager
+    @State private var showPaywall = false
     @Query private var profiles: [UserProfile]
     @Query private var allPets: [Pet]
     @Query private var households: [Household]
@@ -359,6 +478,34 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Premium") {
+                if store.isPremium {
+                    Label("Premium active", systemImage: "checkmark.seal.fill").foregroundStyle(PCColor.freshGreen)
+                } else if store.trial.isActive {
+                    Label("Free trial — \(store.trial.daysRemaining) day\(store.trial.daysRemaining == 1 ? "" : "s") left", systemImage: "gift.fill")
+                        .foregroundStyle(PCColor.freshGreen)
+                    Text("Every Premium feature is unlocked during your trial. No payment is due and nothing will be charged when it ends.")
+                        .font(.caption).foregroundStyle(PCColor.secondaryText)
+                } else {
+                    Text("Your free trial has ended. Your pets and records are all still here — subscribing unlocks the Premium features again.")
+                        .font(.caption).foregroundStyle(PCColor.secondaryText)
+                }
+                Button("Premium Subscription") { showPaywall = true }
+                Button("Restore Purchases") { Task { await store.restorePurchases() } }
+                if let info = store.infoMessage {
+                    Text(info).font(.caption).foregroundStyle(PCColor.secondaryText)
+                }
+                if let error = store.purchaseError {
+                    Text(error).font(.caption).foregroundStyle(PCColor.errorRed)
+                }
+            }
+            Section("Personalize & Family") {
+                NavigationLink("Change App Icon") { AppIconSettingsView() }
+                NavigationLink("Change Notification Sound") { NotificationSoundSettingsView() }
+                NavigationLink("Reminder Preferences") { ReminderPreferencesView() }
+                NavigationLink("Family & Care Team") { CareTeamView() }
+                NavigationLink("Roles & Permissions") { RolesPermissionsView() }
+            }
             Section("Reminders") {
                 Toggle("Enable reminders", isOn: Binding(
                     get: { profiles.first?.remindersEnabled ?? false },
@@ -476,6 +623,7 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings & Data")
+        .sheet(isPresented: $showPaywall) { PaywallView() }
         .sheet(isPresented: $showShare) {
             if let exportData { ShareSheet(items: [exportData]) }
         }

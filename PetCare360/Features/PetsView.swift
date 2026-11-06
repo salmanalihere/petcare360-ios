@@ -72,7 +72,7 @@ struct PetsView: View {
     /// reminder-rebuilding — shared with the pet detail screen.
     private func restoreFromList(_ pet: Pet) {
         switch PetArchiveService.restore(pet: pet, activeCount: pets.count,
-                                         isPremium: store.isPremium, in: context) {
+                                         isPremium: store.hasPremiumAccess, in: context) {
         case .done: break
         case .limitReached:
             premiumPrompt = .restorePet
@@ -83,7 +83,7 @@ struct PetsView: View {
     }
 
     private func addPetTapped() {
-        if EntitlementPolicy.canAddPet(currentCount: pets.count, isPremium: store.isPremium) {
+        if EntitlementPolicy.canAddPet(currentCount: pets.count, isPremium: store.hasPremiumAccess) {
             showEditor = true
         } else {
             premiumPrompt = .addPet
@@ -95,7 +95,7 @@ struct PetsView: View {
     /// After the paywall closes with Premium active, finish the
     /// action the user originally asked for — no repeated taps.
     private func resumeAfterPaywall() {
-        guard store.isPremium else { return }
+        guard store.hasPremiumAccess else { return }
         if let pet = resumeRestorePet {
             resumeRestorePet = nil
             restoreFromList(pet)
@@ -208,14 +208,14 @@ struct PetDetailView: View {
             Text(PremiumPrompt.restorePet.message)
         }
         .sheet(isPresented: $showDetailPaywall, onDismiss: {
-            if store.isPremium, pet.isArchived { archiveOrRestore() }
+            if store.hasPremiumAccess, pet.isArchived { archiveOrRestore() }
         }) { PaywallView() }
     }
 
     private func archiveOrRestore() {
         let outcome = pet.isArchived
             ? PetArchiveService.restore(pet: pet, activeCount: activePets.count,
-                                        isPremium: store.isPremium, in: context)
+                                        isPremium: store.hasPremiumAccess, in: context)
             : PetArchiveService.archive(pet: pet, in: context)
         switch outcome {
         case .done: break
