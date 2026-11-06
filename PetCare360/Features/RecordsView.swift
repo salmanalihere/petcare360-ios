@@ -377,7 +377,7 @@ struct DocumentsView: View {
             }
             Section {
                 Button {
-                    if EntitlementPolicy.canUse(.documentScanning, isPremium: store.isPremium) {
+                    if EntitlementPolicy.canUse(.documentScanning, isPremium: store.hasPremiumAccess) {
                         showScanner = true
                     } else { showPremiumAlert = true }
                 } label: { Label("Scan a document", systemImage: "doc.viewfinder") }
@@ -504,7 +504,7 @@ struct AppointmentsView: View {
                         Text("Cancelled").font(.caption.bold()).foregroundStyle(PCColor.errorRed)
                     }
                     HStack(spacing: 16) {
-                        if store.isPremium {
+                        if store.hasPremiumAccess {
                             PDFShareButton(title: "Visit Preparation PDF") {
                                 PDFService.visitPreparation(pet: pet, appointment: appt)
                             }
@@ -659,7 +659,7 @@ struct HealthChartsView: View {
     var body: some View {
         List {
             Section("Weight History") {
-                if !store.isPremium {
+                if !store.hasPremiumAccess {
                     Label("Advanced health charts are a Premium feature. Your weight history below stays fully available on the free plan.", systemImage: "lock")
                         .font(.subheadline).foregroundStyle(PCColor.secondaryText)
                 } else if weightPoints.count < 2 {
@@ -793,7 +793,7 @@ struct ExpensesView: View {
                 }
             }
             Section {
-                if store.isPremium {
+                if store.hasPremiumAccess {
                     PDFShareButton(title: "Export Expense Report PDF") {
                         PDFService.expenseReport(petName: pet.name, expenses: expenses)
                     }
@@ -803,12 +803,12 @@ struct ExpensesView: View {
             }
         }
         .navigationTitle("Expenses — \(pet.name)")
-        .toolbar { Button { if store.isPremium { showEditor = true } else { resumeAddExpense = true; showPremiumAlert = true } } label: { Image(systemName: "plus") } }
+        .toolbar { Button { if store.hasPremiumAccess { showEditor = true } else { resumeAddExpense = true; showPremiumAlert = true } } label: { Image(systemName: "plus") } }
         .sheet(isPresented: $showEditor) { ExpenseEditorView(pet: pet) }
         .sheet(item: $expenseToEdit) { expense in ExpenseEditorView(pet: pet, existing: expense) }
         .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .premiumFeature) { showPaywall = true }
         .sheet(isPresented: $showPaywall, onDismiss: {
-            if store.isPremium, resumeAddExpense { resumeAddExpense = false; showEditor = true }
+            if store.hasPremiumAccess, resumeAddExpense { resumeAddExpense = false; showEditor = true }
         }) { PaywallView() }
     }
 }
@@ -932,7 +932,7 @@ struct InsuranceView: View {
                     }
                     HStack(spacing: 16) {
                         Button("Add claim") {
-                            if store.isPremium { claimPolicy = policy } else { resumeClaimPolicy = policy; showPremiumAlert = true }
+                            if store.hasPremiumAccess { claimPolicy = policy } else { resumeClaimPolicy = policy; showPremiumAlert = true }
                         }
                         Button("Edit policy") { policyToEdit = policy }
                     }
@@ -940,7 +940,7 @@ struct InsuranceView: View {
             }
         }
         .navigationTitle("Insurance — \(pet.name)")
-        .toolbar { Button { if store.isPremium { showEditor = true } else { resumeAddPolicy = true; showPremiumAlert = true } } label: { Image(systemName: "plus") } }
+        .toolbar { Button { if store.hasPremiumAccess { showEditor = true } else { resumeAddPolicy = true; showPremiumAlert = true } } label: { Image(systemName: "plus") } }
         .sheet(isPresented: $showEditor) { InsuranceEditorView(pet: pet) }
         .sheet(item: $policyToEdit) { policy in InsuranceEditorView(pet: pet, existing: policy) }
         .sheet(item: $claimToEdit) { claim in ClaimEditorView(policy: claim.policy, existing: claim) }
@@ -949,7 +949,7 @@ struct InsuranceView: View {
         }
         .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .premiumFeature) { showPaywall = true }
         .sheet(isPresented: $showPaywall, onDismiss: {
-            if store.isPremium {
+            if store.hasPremiumAccess {
                 if resumeAddPolicy { resumeAddPolicy = false; showEditor = true }
                 if let policy = resumeClaimPolicy { resumeClaimPolicy = nil; claimPolicy = policy }
             }
@@ -1189,7 +1189,7 @@ struct RecallsView: View {
         .navigationTitle("Recall Tracking")
         .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .savedBrands) { showPaywall = true }
         .sheet(isPresented: $showPaywall, onDismiss: {
-            if store.isPremium { addBrand() }
+            if store.hasPremiumAccess { addBrand() }
         }) { PaywallView() }
     }
 
@@ -1197,7 +1197,7 @@ struct RecallsView: View {
     /// upgrade: the premium guard lives here, so a post-purchase
     /// retry passes straight through.
     private func addBrand() {
-        guard store.isPremium else { showPremiumAlert = true; return }
+        guard store.hasPremiumAccess else { showPremiumAlert = true; return }
         guard !newBrand.isEmpty else { return }
         context.insert(SavedFoodBrand(brand: newBrand))
         do { try context.save() } catch {
