@@ -157,10 +157,23 @@ workflows:
             ONLY_ACTIVE_ARCH=YES \
             ARCHS=arm64 \
             2>&1 | tee "$DIAG_DIR/01-build-for-testing.log"
+      - name: Record built simulator products
+        script: |
+          echo "=== DERIVED DATA PRODUCTS ==="
+          find "$DERIVED_DATA/Build/Products" -maxdepth 7 -print 2>/dev/null | tee "$DIAG_DIR/01-products.log" || true
+          echo "=== TEST BUNDLE DISCOVERY ==="
+          find "$DERIVED_DATA/Build/Products" -type d -name "*.xctest" -print 2>/dev/null | tee "$DIAG_DIR/01-test-bundles.log" || true
       - name: Test A — minimal schema (local)
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -173,7 +186,14 @@ workflows:
       - name: Test B — full schema (local)
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -186,7 +206,14 @@ workflows:
       - name: Test D1 — PetCore group
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -199,7 +226,14 @@ workflows:
       - name: Test D2 — Insurance group
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -212,7 +246,14 @@ workflows:
       - name: Test D3 — Household group
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -225,7 +266,14 @@ workflows:
       - name: Test D4 — Standalone group
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -238,7 +286,14 @@ workflows:
       - name: Test E — default vs explicit store location (record-only)
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -251,7 +306,14 @@ workflows:
       - name: Test C — CloudKit attempt (separate, record-only, simulator-limited)
         script: |
           set +e
-          test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
+          TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
+          if [ -z "$TEST_BUNDLE" ]; then
+            echo "ABORT: PetCare360Tests.xctest not found anywhere under $DERIVED_DATA/Build/Products"
+            echo "Available simulator products:"
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null | head -200
+            exit 1
+          fi
+          echo "Found test bundle: $TEST_BUNDLE"
           xcodebuild test-without-building \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
