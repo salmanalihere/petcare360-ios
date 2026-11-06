@@ -60,7 +60,7 @@ final class NotificationService {
         // falls back to the system default when the name is nil.
         // System sound/permission settings always win — this app
         // cannot (and does not try to) force a sound to play.
-        content.sound = soundName.map { UNNotificationSound(named: UNNotificationSound.Name($0)) } ?? .default
+        content.sound = soundName.map { UNNotificationSound(named: UNNotificationSoundName(rawValue: $0)) } ?? .default
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
         let dailyComps = Calendar.current.dateComponents([.hour, .minute], from: fireDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: repeatsDaily ? dailyComps : comps, repeats: repeatsDaily)
@@ -364,7 +364,7 @@ final class NotificationService {
         content.title = "PetCare 360 test notification"
         content.body = "This is the sound your reminders will use."
         let soundName = NotificationSoundPreferences.resolvedFileName(species: species)
-        content.sound = soundName.map { UNNotificationSound(named: UNNotificationSound.Name($0)) } ?? .default
+        content.sound = soundName.map { UNNotificationSound(named: UNNotificationSoundName(rawValue: $0)) } ?? .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
         let request = UNNotificationRequest(identifier: "pc360-test-\(UUID().uuidString)", content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request)

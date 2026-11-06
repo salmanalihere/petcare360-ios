@@ -137,3 +137,6 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 ## Platform-fix addendum (2026-11-06)
 - pbxproj: SDKROOT=iphoneos + SUPPORTED_PLATFORMS="iphoneos iphonesimulator" added to all 8 config blocks (diff-verified as the ONLY pbx change); scheme XML valid, refs correct; parse 45/45 PASS.
 - xcodebuild NOT run (no Xcode here) — Codemagic is the verification. Details: docs/PLATFORM_FIX_REPORT.md.
+
+## Sound-API fix addendum (2026-11-06)
+- NotificationService.swift lines 63 + 367: UNNotificationSound.Name → UNNotificationSoundName(rawValue:) (Xcode 26.6). Project-wide grep: zero old uses remain; diff vs previous package = only these 2 lines. Parse PASS. Details: docs/SOUNDFIX_REPORT.md.
