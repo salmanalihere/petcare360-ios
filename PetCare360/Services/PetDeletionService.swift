@@ -80,8 +80,9 @@ enum PetDeletionService {
         var ids = pet.vaccinations.map { "vax-\($0.id.uuidString)" }
             + pet.appointments.map { "appt-\($0.id.uuidString)" }
             + pet.foodSchedules.map { "feed-\($0.id.uuidString)" }
+        let petID = pet.id
         if let policies = try? context.fetch(FetchDescriptor<InsurancePolicy>(
-            predicate: #Predicate { $0.petID == pet.id })) {
+            predicate: #Predicate { $0.petID == petID })) {
             ids += policies.map { "ins-\($0.id.uuidString)" }
         }
         NotificationService.shared.cancel(ids: ids)

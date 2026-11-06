@@ -140,3 +140,6 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 
 ## Sound-API fix addendum (2026-11-06)
 - NotificationService.swift lines 63 + 367: UNNotificationSound.Name → UNNotificationSoundName(rawValue:) (Xcode 26.6). Project-wide grep: zero old uses remain; diff vs previous package = only these 2 lines. Parse PASS. Details: docs/SOUNDFIX_REPORT.md.
+
+## Predicate-fix addendum (2026-11-06)
+- PetDeletionService.cancelAllReminders: pet.id captured as local petID before the InsurancePolicy #Predicate (Xcode 26.6 macro failure). Project-wide predicate audit: the other 4 fetches already used the pattern; all @Query filters capture nothing. Diff = +1 line, 1 line changed. Parse PASS. Details: docs/PREDICATE_FIX_REPORT.md.
