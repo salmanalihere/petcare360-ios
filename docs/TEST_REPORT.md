@@ -149,3 +149,7 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 
 ## Icon-fix addendum (2026-11-06)
 - All 8 appiconset Contents.json → universal/platform ios 1024 format (was iphone/1x — the 90713+90022 root cause); INFOPLIST_KEY_CFBundleIconName=AppIcon added to app target only (pbx diff = 2 lines). Icons verified 1024x1024 RGB no-alpha. Build stays 12 for the retry. scripts/generate_app_icon.sh is repo-side, not in this package. Details: docs/ICON_FIX_REPORT.md.
+
+## Recovery addendum (2026-11-06, build 13)
+- openStorage ladder: CloudKit → local → ONE-TIME per-generation wipe+retry (marked before retrying; no loop) → error screen with both errors + confirmed manual Reset (new generation). No in-memory fallback. New: Services/StoreRecovery.swift.
+- 6 new tests (policy/ledger/wiper/file-backed create-reopen-CRUD); total 143 written, ZERO executed. Parse 47/47 PASS both parsers; sweep ALL RESOLVE. Device/Xcode testing NOT performed. Details: docs/RECOVERY_REPORT.md.
