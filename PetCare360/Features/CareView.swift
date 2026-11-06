@@ -381,15 +381,15 @@ struct MedicationEditorView: View {
                             Text("Weekdays").font(.subheadline)
                             HStack(spacing: 6) {
                                 ForEach(1...7, id: \.self) { day in
-                                    let weekdayName = weekdayNames[day - 1]
+                                    let name = weekdayNames[day - 1]
                                     let isSelected = selectedWeekdays.contains(day)
-                                    Button(weekdayName) {
+                                    Button(name) {
                                         if isSelected { selectedWeekdays.remove(day) }
                                         else { selectedWeekdays.insert(day) }
                                     }
                                     .buttonStyle(.bordered)
                                     .tint(isSelected ? PCColor.freshGreen : PCColor.secondaryText)
-                                    .accessibilityLabel(isSelected ? "\(weekdayName), selected" : weekdayName)
+                                    .accessibilityLabel(isSelected ? "\(name), selected" : name)
                                 }
                             }
                             if selectedWeekdays.isEmpty {

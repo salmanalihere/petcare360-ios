@@ -1,3 +1,14 @@
+> STATUS (2026-11-06): CloudKit is now ENABLED in code at the
+> owner's instruction — AppConfig.cloudKitSyncEnabled = true,
+> container iCloud.com.xenon-media.petcare360, entitlements wired
+> via CODE_SIGN_ENTITLEMENTS. The portal/profile items below remain
+> the owner's responsibility; if the container cannot be opened,
+> the app falls back to the local store (no crash, no data loss).
+> IMPORTANT: enabling CloudKit changes the on-device store
+> location — export a full backup BEFORE installing the first
+> CloudKit build, and Merge-restore it afterwards if your existing
+> records do not appear.
+
 # CloudKit / iCloud — What Is Implemented, What Is Not, Owner Setup
 
 ## What the code does now (1.2.1)
@@ -6,7 +17,7 @@
   and there are NO unique constraints anywhere (verified by inspection).
 - `PetCare360App` opens the LOCAL on-device store. CloudKit is NOT
   attempted automatically (v1.2.2 audit rule): the CloudKit private
-  configuration for container `iCloud.com.petcare360.app` is only used
+  configuration for container `iCloud.com.xenon-media.petcare360` is only used
   when `AppConfig.cloudKitSyncEnabled` is set to true, which may only
   happen AFTER the owner setup below is complete.
 - If the persistent store cannot be opened, the app shows a recoverable
@@ -38,8 +49,8 @@ connectivity returns; CloudKit resolves conflicts per record.
 
 ## Owner activation steps (Apple Developer account required)
 1. https://developer.apple.com/account → Identifiers → the App ID
-   `com.petcare360.app` → enable **iCloud** → create/select the container
-   `iCloud.com.petcare360.app`.
+   `com.xenon-media.petcare360` → enable **iCloud** → create/select the container
+   `iCloud.com.xenon-media.petcare360`.
 2. In Xcode: target → Signing & Capabilities → **+ Capability → iCloud**
    → check **CloudKit** → check the container above. Xcode sets
    CODE_SIGN_ENTITLEMENTS to the shipped `PetCare360.entitlements`.

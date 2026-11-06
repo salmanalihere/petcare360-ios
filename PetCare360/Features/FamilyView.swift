@@ -8,6 +8,8 @@ struct FamilyView: View {
     @Query private var profiles: [UserProfile]
     @Query private var handoffs: [CareHandoff]
     @State private var showPaywall = false
+    @State private var showPremiumAlert = false
+    @State private var resumeAddMember = false
     @State private var showMemberEditor = false
     @State private var handoffToDelete: CareHandoff? = nil
     @State private var deleteError = ""
@@ -26,7 +28,7 @@ struct FamilyView: View {
             List {
                 Section("Household") {
                     if !store.isPremium {
-                        Text("Household coordination is a Premium feature. Your household is kept on this device only and unlocks when you subscribe.")
+                        Text("Household coordination is a Premium feature and unlocks when you subscribe.")
                             .font(.subheadline).foregroundStyle(PCColor.secondaryText)
                         Button("See Premium") { showPaywall = true }
                     }
@@ -45,7 +47,7 @@ struct FamilyView: View {
                         }
                     }
                     if HouseholdPermissions.can(myRole, do: .managePets) {
-                        Button("Add member") { if store.isPremium { showMemberEditor = true } else { showPaywall = true } }
+                        Button("Add member") { if store.isPremium { showMemberEditor = true } else { resumeAddMember = true; showPremiumAlert = true } }
                     }
                 }
                 Section("Roles on this device") {
@@ -90,7 +92,10 @@ struct FamilyView: View {
                 }
             }
             .navigationTitle("Family")
-            .sheet(isPresented: $showPaywall) { PaywallView() }
+            .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .householdMembers) { showPaywall = true }
+            .sheet(isPresented: $showPaywall, onDismiss: {
+                if store.isPremium, resumeAddMember { resumeAddMember = false; showMemberEditor = true }
+            }) { PaywallView() }
             .sheet(isPresented: $showMemberEditor) { MemberEditorView() }
             .alert("Delete this handoff?", isPresented: Binding(
                 get: { handoffToDelete != nil },
@@ -144,7 +149,7 @@ struct MemberEditorView: View {
                 }
                 Toggle("Temporary access", isOn: $temporary)
                 if temporary { DatePicker("Access expires", selection: $expires) }
-                Text("Members are recorded on THIS device only. Nothing is sent to the person, they cannot accept or view anything, and no data syncs between devices — cross-device iCloud sharing is not part of this build.")
+                Text("Members are records in your household notebook — they are not separate accounts. Nothing is sent to the person and they cannot accept or view anything. Your records sync privately through your own iCloud account; sharing with other people's accounts is not part of this build.")
                     .font(.caption).foregroundStyle(PCColor.secondaryText)
             }
             .navigationTitle("Add Member")
@@ -340,6 +345,17 @@ struct SettingsView: View {
     @State private var showPermissionDenied = false
     @State private var showImportPreview = false
     @State private var lastExportSummary: [(String, Int)] = []
+    // Notification Preferences (2026-11-06). Keys are shared verbatim
+    // with NotificationSoundPreferences / ReminderCategory.
+    @AppStorage("pc-sound-animal-enabled") private var animalSoundsEnabled = true
+    @AppStorage("pc-sound-default-kind") private var defaultSoundSelection = PetSoundKind.chime.rawValue
+    @AppStorage("pc-notif-medications") private var notifMedications = true
+    @AppStorage("pc-notif-appointments") private var notifAppointments = true
+    @AppStorage("pc-notif-vaccinations") private var notifVaccinations = true
+    @AppStorage("pc-notif-feeding") private var notifFeeding = true
+    @AppStorage("pc-notif-insurance") private var notifInsurance = true
+    @StateObject private var soundPreview = SoundPreviewPlayer()
+    @State private var testSent = false
 
     var body: some View {
         Form {
@@ -381,6 +397,50 @@ struct SettingsView: View {
                 Text("How medication reminders work: they are prepared one week at a time and refreshed whenever you open the app (iOS does not guarantee background refresh). If the app is not opened for more than a week, later dose reminders may not fire until you open it again.")
                     .font(.caption).foregroundStyle(PCColor.secondaryText)
             }
+            Section("Notification Preferences") {
+                Toggle("Animal-Specific Sounds", isOn: $animalSoundsEnabled)
+                Text("When on, a reminder uses the sound matching its pet — a woof for your dog, a meow for your cat. When off, every reminder uses the default sound below.")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+                Picker("Default Notification Sound", selection: $defaultSoundSelection) {
+                    Text("iOS System Default").tag(NotificationSoundPreferences.systemDefaultValue)
+                    ForEach(PetSoundKind.allCases, id: \.rawValue) { kind in
+                        Text(kind.label).tag(kind.rawValue)
+                    }
+                }
+                Text("Hear each sound:")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+                ForEach(PetSoundKind.allCases, id: \.rawValue) { kind in
+                    Button {
+                        soundPreview.play(kind)
+                    } label: {
+                        Label(kind.label, systemImage: "play.circle")
+                    }
+                    .accessibilityLabel("Preview \(kind.label)")
+                }
+                Button {
+                    NotificationService.shared.scheduleTestNotification(species: allPets.first?.species)
+                    testSent = true
+                } label: {
+                    Label("Send Test Notification", systemImage: "bell.badge")
+                }
+                if testSent {
+                    Text("Test scheduled — it arrives in about 5 seconds with the sound a reminder for \(allPets.first?.name ?? "your pet") would use. Lock the phone or leave the app to hear it as a real notification.")
+                        .font(.caption).foregroundStyle(PCColor.secondaryText)
+                }
+                Text("Sounds play only when iOS allows them: notification permission, the silent switch, Focus modes and your iOS sound settings always take priority.")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+                Toggle("Medication reminders", isOn: $notifMedications)
+                    .onChange(of: notifMedications) { _, on in categoryToggled(.medications, on: on) }
+                Toggle("Appointment reminders", isOn: $notifAppointments)
+                    .onChange(of: notifAppointments) { _, on in categoryToggled(.appointments, on: on) }
+                Toggle("Vaccination reminders", isOn: $notifVaccinations)
+                    .onChange(of: notifVaccinations) { _, on in categoryToggled(.vaccinations, on: on) }
+                Toggle("Feeding reminders", isOn: $notifFeeding)
+                    .onChange(of: notifFeeding) { _, on in categoryToggled(.feeding, on: on) }
+                Toggle("Insurance renewal reminders", isOn: $notifInsurance)
+                    .onChange(of: notifInsurance) { _, on in categoryToggled(.insurance, on: on) }
+            }
+            AppIconPickerSection()
             Section("Your Data") {
                 Button("Export full backup (JSON)") {
                     let backup = BackupService.makeFullBackup(
@@ -399,7 +459,7 @@ struct SettingsView: View {
                 }
                 Button("Import backup (JSON)") { showImporter = true }
                 if !importMessage.isEmpty { Text(importMessage).font(.caption) }
-                Text("Your pets' data is stored on this device only. iCloud sync and cross-device sharing are not enabled in this build. PetCare 360 collects no analytics and does not track you.")
+                Text("Your pets' data is stored on this device and synced privately through your iCloud account (CloudKit) to your other devices signed into the same Apple ID. PetCare 360 collects no analytics and does not track you.")
                     .font(.caption).foregroundStyle(PCColor.secondaryText)
             }
             Section("Support") {
@@ -461,6 +521,19 @@ struct SettingsView: View {
             showImportPreview = true
         } catch {
             importMessage = "That file is not a valid PetCare 360 backup. Nothing was imported."
+        }
+    }
+
+    /// Switching a reminder category off cancels that category's
+    /// pending notifications immediately; switching it on rebuilds
+    /// from current data through the one serialized sync.
+    private func categoryToggled(_ category: ReminderCategory, on: Bool) {
+        if on {
+            NotificationService.shared.synchronizeReminders(
+                pets: allPets, schedules: allSchedules, policies: allPolicies,
+                remindersEnabled: profiles.first?.remindersEnabled ?? false)
+        } else {
+            NotificationService.shared.cancelPending(withPrefixes: category.pendingPrefixes)
         }
     }
 

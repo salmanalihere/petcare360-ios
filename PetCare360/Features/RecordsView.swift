@@ -360,6 +360,7 @@ struct DocumentsView: View {
     @Bindable var pet: Pet
     @State private var showScanner = false
     @State private var showPremiumAlert = false
+    @State private var showPaywall = false
     var body: some View {
         List {
             if pet.documents.isEmpty { Text("No documents stored.").foregroundStyle(PCColor.secondaryText) }
@@ -386,9 +387,8 @@ struct DocumentsView: View {
         }
         .navigationTitle("Documents")
         .sheet(isPresented: $showScanner) { DocumentScannerView(pet: pet) }
-        .alert("Premium", isPresented: $showPremiumAlert) {
-            Button("OK", role: .cancel) {}
-        } message: { Text("Document scanning is a PetCare 360 Premium feature.") }
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .documentScanning) { showPaywall = true }
+        .sheet(isPresented: $showPaywall) { PaywallView() }
     }
 }
 
@@ -461,9 +461,31 @@ struct DocumentDetailView: View {
 struct AppointmentsView: View {
     @Environment(\.modelContext) private var context
     @Bindable var pet: Pet
+
+    /// Status changes save immediately; the reminder is cancelled or
+    /// rescheduled to match, and a failure rolls back with an error.
+    private func setAppointmentStatus(_ appt: VetAppointment, completed: Bool = false, cancelled: Bool = false) {
+        appt.isCompleted = completed
+        appt.isCancelled = cancelled
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            statusError = "That change could not be saved on this device, so nothing was changed. Please try again."
+            return
+        }
+        NotificationService.shared.cancel(ids: ["appt-\(appt.id.uuidString)"])
+        if NotificationService.shouldScheduleAppointmentReminder(appt) {
+            NotificationService.shared.scheduleOneOff(
+                id: "appt-\(appt.id.uuidString)", title: "Vet appointment: \(pet.name)",
+                body: appt.title, fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
+        }
+    }
+    @State private var statusError = ""
     @State private var showEditor = false
     @State private var apptToEdit: VetAppointment? = nil
     @State private var showPremiumAlert = false
+    @State private var showPaywall = false
     @EnvironmentObject private var store: StoreManager
     var body: some View {
         List {
@@ -476,6 +498,11 @@ struct AppointmentsView: View {
                     if !appt.questionList.isEmpty {
                         Text("Questions: \(appt.questionList.joined(separator: "; "))").font(.caption)
                     }
+                    if appt.isCompleted {
+                        Text("Completed").font(.caption.bold()).foregroundStyle(PCColor.freshGreen)
+                    } else if appt.isCancelled {
+                        Text("Cancelled").font(.caption.bold()).foregroundStyle(PCColor.errorRed)
+                    }
                     HStack(spacing: 16) {
                         if store.isPremium {
                             PDFShareButton(title: "Visit Preparation PDF") {
@@ -485,18 +512,24 @@ struct AppointmentsView: View {
                             Button("Visit Preparation PDF") { showPremiumAlert = true }
                         }
                         Button("Edit") { apptToEdit = appt }
+                        if !appt.isCompleted && !appt.isCancelled {
+                            Button("Complete") { setAppointmentStatus(appt, completed: true) }
+                            Button("Cancel", role: .destructive) { setAppointmentStatus(appt, cancelled: true) }
+                        } else {
+                            Button("Reopen") { setAppointmentStatus(appt) }
+                        }
                     }
                     .font(.caption)
                 }
             }
         }
         .navigationTitle("Appointments")
+        .alert("Couldn't save", isPresented: Binding(get: { !statusError.isEmpty }, set: { if !$0 { statusError = "" } })) { Button("OK", role: .cancel) {} } message: { Text(statusError) }
         .toolbar { Button { showEditor = true } label: { Image(systemName: "plus") } }
         .sheet(isPresented: $showEditor) { AppointmentEditorView(pet: pet) }
         .sheet(item: $apptToEdit) { appt in AppointmentEditorView(pet: pet, existing: appt) }
-        .alert("Premium", isPresented: $showPremiumAlert) {
-            Button("OK", role: .cancel) {}
-        } message: { Text("This is a PetCare 360 Premium feature. Your existing records stay fully visible, editable, exportable and deletable on the free plan.") }
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .premiumFeature) { showPaywall = true }
+        .sheet(isPresented: $showPaywall) { PaywallView() }
     }
 }
 
@@ -514,6 +547,7 @@ struct AppointmentEditorView: View {
     @State private var notes = ""
     @State private var questions = ""
     @State private var isCompleted = false
+    @State private var isCancelled = false
     @State private var confirmDelete = false
     @State private var loaded = false
     @State private var saveError = ""
@@ -526,7 +560,10 @@ struct AppointmentEditorView: View {
                 DatePicker("Date & time", selection: $date)
                 TextField("Notes", text: $notes, axis: .vertical)
                 TextField("Questions to ask (one per line)", text: $questions, axis: .vertical)
-                if existing != nil { Toggle("Completed", isOn: $isCompleted) }
+                if existing != nil {
+                    Toggle("Completed", isOn: $isCompleted)
+                    Toggle("Cancelled", isOn: $isCancelled)
+                }
                 Text("PetCare 360 organises your visit; it does not book appointments with clinics.")
                     .font(.caption).foregroundStyle(PCColor.secondaryText)
                 if existing != nil {
@@ -548,6 +585,7 @@ struct AppointmentEditorView: View {
                     title = existing.title; clinic = existing.clinic; vet = existing.vetName
                     date = existing.date; notes = existing.notes; questions = existing.questions
                     isCompleted = existing.isCompleted
+                    isCancelled = existing.isCancelled
                 }
             }
             .alert("Delete this appointment?", isPresented: $confirmDelete) {
@@ -579,6 +617,7 @@ struct AppointmentEditorView: View {
         appt.title = title; appt.clinic = clinic; appt.vetName = vet
         appt.date = date; appt.notes = notes; appt.questions = questions
         appt.isCompleted = isCompleted
+        appt.isCancelled = isCancelled
         do { try context.save() } catch {
             saveError = "Your changes could not be saved on this device. Nothing was closed — please try again."
             return
@@ -588,7 +627,7 @@ struct AppointmentEditorView: View {
             && NotificationService.shouldScheduleAppointmentReminder(appt) {
             NotificationService.shared.scheduleOneOff(
                 id: "appt-\(appt.id.uuidString)", title: "Vet appointment: \(pet.name)",
-                body: title, fireDate: appt.date.addingTimeInterval(-3600))
+                body: title, fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
         }
         dismiss()
     }
@@ -721,7 +760,9 @@ struct ExpensesView: View {
     @Bindable var pet: Pet
     @State private var showEditor = false
     @State private var expenseToEdit: PetExpense? = nil
+    @State private var resumeAddExpense = false
     @State private var showPremiumAlert = false
+    @State private var showPaywall = false
     private var expenses: [PetExpense] { pet.expenses.sorted { $0.date > $1.date } }
     var body: some View {
         List {
@@ -762,12 +803,13 @@ struct ExpensesView: View {
             }
         }
         .navigationTitle("Expenses — \(pet.name)")
-        .toolbar { Button { if store.isPremium { showEditor = true } else { showPremiumAlert = true } } label: { Image(systemName: "plus") } }
+        .toolbar { Button { if store.isPremium { showEditor = true } else { resumeAddExpense = true; showPremiumAlert = true } } label: { Image(systemName: "plus") } }
         .sheet(isPresented: $showEditor) { ExpenseEditorView(pet: pet) }
         .sheet(item: $expenseToEdit) { expense in ExpenseEditorView(pet: pet, existing: expense) }
-        .alert("Premium", isPresented: $showPremiumAlert) {
-            Button("OK", role: .cancel) {}
-        } message: { Text("This is a PetCare 360 Premium feature. Your existing records stay fully visible, editable, exportable and deletable on the free plan.") }
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .premiumFeature) { showPaywall = true }
+        .sheet(isPresented: $showPaywall, onDismiss: {
+            if store.isPremium, resumeAddExpense { resumeAddExpense = false; showEditor = true }
+        }) { PaywallView() }
     }
 }
 
@@ -858,7 +900,10 @@ struct InsuranceView: View {
     @State private var policyToEdit: InsurancePolicy? = nil
     @State private var claimToEdit: InsuranceClaim? = nil
     @State private var showPremiumAlert = false
+    @State private var showPaywall = false
     @State private var claimPolicy: InsurancePolicy? = nil
+    @State private var resumeAddPolicy = false
+    @State private var resumeClaimPolicy: InsurancePolicy? = nil
     private var myPolicies: [InsurancePolicy] { policies.filter { $0.petID == pet.id } }
     var body: some View {
         List {
@@ -887,7 +932,7 @@ struct InsuranceView: View {
                     }
                     HStack(spacing: 16) {
                         Button("Add claim") {
-                            if store.isPremium { claimPolicy = policy } else { showPremiumAlert = true }
+                            if store.isPremium { claimPolicy = policy } else { resumeClaimPolicy = policy; showPremiumAlert = true }
                         }
                         Button("Edit policy") { policyToEdit = policy }
                     }
@@ -895,16 +940,20 @@ struct InsuranceView: View {
             }
         }
         .navigationTitle("Insurance — \(pet.name)")
-        .toolbar { Button { if store.isPremium { showEditor = true } else { showPremiumAlert = true } } label: { Image(systemName: "plus") } }
+        .toolbar { Button { if store.isPremium { showEditor = true } else { resumeAddPolicy = true; showPremiumAlert = true } } label: { Image(systemName: "plus") } }
         .sheet(isPresented: $showEditor) { InsuranceEditorView(pet: pet) }
         .sheet(item: $policyToEdit) { policy in InsuranceEditorView(pet: pet, existing: policy) }
         .sheet(item: $claimToEdit) { claim in ClaimEditorView(policy: claim.policy, existing: claim) }
         .sheet(item: $claimPolicy) { policy in
             NavigationStack { ClaimEditorView(policy: policy) }
         }
-        .alert("Premium", isPresented: $showPremiumAlert) {
-            Button("OK", role: .cancel) {}
-        } message: { Text("This is a PetCare 360 Premium feature. Your existing records stay fully visible, editable, exportable and deletable on the free plan.") }
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .premiumFeature) { showPaywall = true }
+        .sheet(isPresented: $showPaywall, onDismiss: {
+            if store.isPremium {
+                if resumeAddPolicy { resumeAddPolicy = false; showEditor = true }
+                if let policy = resumeClaimPolicy { resumeClaimPolicy = nil; claimPolicy = policy }
+            }
+        }) { PaywallView() }
     }
 }
 
@@ -1089,6 +1138,7 @@ struct RecallsView: View {
     @EnvironmentObject private var store: StoreManager
     @Environment(\.modelContext) private var context
     @State private var showPremiumAlert = false
+    @State private var showPaywall = false
     @Query private var brands: [SavedFoodBrand]
     @Query private var alerts: [RecallAlert]
     @State private var newBrand = ""
@@ -1112,19 +1162,13 @@ struct RecallsView: View {
                 Button("Mark FDA page checked now") { lastCheckedEpoch = Date().timeIntervalSince1970 }
             }
             Section("Your Saved Brands") {
-                ForEach(brands, id: \.id) { brand in Text(brand.brand) }
+                ForEach(brands) { brand in Text(brand.brand) }
                 HStack {
                     TextField("Brand to watch", text: $newBrand)
-                    Button("Add") {
-                        guard store.isPremium else { showPremiumAlert = true; return }
-                        guard !newBrand.isEmpty else { return }
-                        context.insert(SavedFoodBrand(brand: newBrand))
-                        do { try context.save() } catch {
-                            saveError = "Your changes could not be saved on this device. Nothing was closed — please try again."
-                            return
-                        }
-                        newBrand = ""
-                    }
+                    Button("Add") { addBrand() }
+                }
+                if !saveError.isEmpty {
+                    Text(saveError).font(.caption).foregroundStyle(PCColor.errorRed)
                 }
             }
             Section("Saved Recall Entries") {
@@ -1132,7 +1176,7 @@ struct RecallsView: View {
                     Text("No recall entries saved. When the FDA publishes a recall affecting a brand you use, open it above and record it here from the official notice.")
                         .foregroundStyle(PCColor.secondaryText)
                 }
-                ForEach(alerts, id: \.id) { alert in
+                ForEach(alerts) { alert in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(alert.productName).font(.headline)
                         Text("\(alert.manufacturer) • \(alert.recallDate.formatted(date: .abbreviated, time: .omitted))").font(.caption)
@@ -1143,9 +1187,24 @@ struct RecallsView: View {
             }
         }
         .navigationTitle("Recall Tracking")
-        .alert("Premium", isPresented: $showPremiumAlert) {
-            Button("OK", role: .cancel) {}
-        } message: { Text("This is a PetCare 360 Premium feature. Your existing records stay fully visible, editable, exportable and deletable on the free plan.") }
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .savedBrands) { showPaywall = true }
+        .sheet(isPresented: $showPaywall, onDismiss: {
+            if store.isPremium { addBrand() }
+        }) { PaywallView() }
+    }
+
+    /// One add path for the button AND for resuming after a Premium
+    /// upgrade: the premium guard lives here, so a post-purchase
+    /// retry passes straight through.
+    private func addBrand() {
+        guard store.isPremium else { showPremiumAlert = true; return }
+        guard !newBrand.isEmpty else { return }
+        context.insert(SavedFoodBrand(brand: newBrand))
+        do { try context.save() } catch {
+            saveError = "That brand could not be saved on this device — please try again."
+            return
+        }
+        newBrand = ""
     }
 }
 

@@ -8,6 +8,10 @@ struct PetsView: View {
     @Query private var allPets: [Pet]
     @State private var showEditor = false
     @State private var showPremiumAlert = false
+    @State private var showPaywall = false
+    @State private var premiumPrompt: PremiumPrompt = .addPet
+    @State private var resumeAddPet = false
+    @State private var resumeRestorePet: Pet? = nil
     @State private var showSaveError = false
 
     private var pets: [Pet] { allPets.filter { !$0.isArchived } }
@@ -54,11 +58,8 @@ struct PetsView: View {
                 }
             }
             .sheet(isPresented: $showEditor) { PetEditorView(pet: nil) }
-            .alert("Premium", isPresented: $showPremiumAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("The free plan includes one pet. PetCare 360 Premium unlocks unlimited pet profiles.")
-            }
+            .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: premiumPrompt) { showPaywall = true }
+            .sheet(isPresented: $showPaywall, onDismiss: resumeAfterPaywall) { PaywallView() }
             .alert("Couldn't restore", isPresented: $showSaveError) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -73,7 +74,10 @@ struct PetsView: View {
         switch PetArchiveService.restore(pet: pet, activeCount: pets.count,
                                          isPremium: store.isPremium, in: context) {
         case .done: break
-        case .limitReached: showPremiumAlert = true
+        case .limitReached:
+            premiumPrompt = .restorePet
+            resumeRestorePet = pet
+            showPremiumAlert = true
         case .saveFailed: showSaveError = true
         }
     }
@@ -82,7 +86,22 @@ struct PetsView: View {
         if EntitlementPolicy.canAddPet(currentCount: pets.count, isPremium: store.isPremium) {
             showEditor = true
         } else {
+            premiumPrompt = .addPet
+            resumeAddPet = true
             showPremiumAlert = true
+        }
+    }
+
+    /// After the paywall closes with Premium active, finish the
+    /// action the user originally asked for — no repeated taps.
+    private func resumeAfterPaywall() {
+        guard store.isPremium else { return }
+        if let pet = resumeRestorePet {
+            resumeRestorePet = nil
+            restoreFromList(pet)
+        } else if resumeAddPet {
+            resumeAddPet = false
+            showEditor = true
         }
     }
 }
@@ -97,6 +116,7 @@ struct PetDetailView: View {
     @State private var showEmergency = false
     @State private var confirmDelete = false
     @State private var showRestoreLimitAlert = false
+    @State private var showDetailPaywall = false
     @State private var showArchiveSaveError = false
     @State private var deleteError = "" 
 
@@ -182,10 +202,14 @@ struct PetDetailView: View {
             Button("OK", role: .cancel) {}
         } message: { Text(deleteError) }
         .alert("Pet limit reached", isPresented: $showRestoreLimitAlert) {
-            Button("OK", role: .cancel) {}
+            Button("Upgrade to Premium") { showDetailPaywall = true }
+            Button("Not Now", role: .cancel) {}
         } message: {
-            Text("The free plan includes 1 active pet. Restoring an archived pet counts toward that limit — PetCare 360 Premium allows unlimited pets.")
+            Text(PremiumPrompt.restorePet.message)
         }
+        .sheet(isPresented: $showDetailPaywall, onDismiss: {
+            if store.isPremium, pet.isArchived { archiveOrRestore() }
+        }) { PaywallView() }
     }
 
     private func archiveOrRestore() {

@@ -7,6 +7,7 @@ struct HomeView: View {
     @Query private var profiles: [UserProfile]
     @Query private var tasks: [CareTask]
     @Query private var handoffs: [CareHandoff]
+    @Query private var policies: [InsurancePolicy]
     @State private var emergencyPet: Pet? = nil
 
     private var greeting: String {
@@ -49,8 +50,7 @@ struct HomeView: View {
                     } else {
                         careProgress
                         upcomingMedications
-                        nextAppointment
-                        upcomingVaccinations
+                        homeSchedule
                         recentObservations
                         recentHandoffs
                     }
@@ -144,38 +144,36 @@ struct HomeView: View {
         .pcCard()
     }
 
-    private var nextAppointment: some View {
-        let upcoming = pets.flatMap { $0.appointments }
-            .filter { $0.date >= Date() && !$0.isCompleted }
-            .sorted { $0.date < $1.date }
-        return VStack(alignment: .leading, spacing: 8) {
-            PCSectionHeader(title: "Next Veterinary Appointment")
-            if let first = upcoming.first {
-                Text(first.title).font(.body).foregroundStyle(PCColor.charcoal)
-                Text("\(first.date.formatted(date: .abbreviated, time: .shortened)) • \(first.clinic)")
+    /// The centralized schedule (2026-11-06): appointments,
+    /// vaccinations, feeding, renewals, birthdays, tasks and
+    /// tomorrow's doses from the real database. Today's doses and
+    /// tasks live in Today's Care above, so nothing appears twice.
+    private var scheduleItems: [ScheduleItem] {
+        HomeSchedule.build(pets: pets, tasks: tasks, policies: policies,
+                           includeTodayActionable: false)
+    }
+
+    private var homeSchedule: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PCSectionHeader(title: "Upcoming for Your Pets")
+            if scheduleItems.isEmpty {
+                Text("Nothing scheduled in the next 30 days.")
                     .font(.subheadline).foregroundStyle(PCColor.secondaryText)
             } else {
-                Text("No upcoming appointments.").font(.subheadline).foregroundStyle(PCColor.secondaryText)
+                ForEach(scheduleItems.prefix(5)) { item in
+                    if let pet = pets.first(where: { $0.id == item.petID }) {
+                        NavigationLink { PetDetailView(pet: pet) } label: { ScheduleRow(item: item, pet: pet) }
+                            .buttonStyle(.plain)
+                    } else {
+                        ScheduleRow(item: item, pet: nil)
+                    }
+                }
+                NavigationLink { ScheduleView() } label: {
+                    Text("View All").font(.subheadline.bold()).foregroundStyle(PCColor.freshGreen)
+                }
             }
         }
         .pcCard()
-    }
-
-    private var upcomingVaccinations: some View {
-        let due = pets.flatMap { pet in pet.vaccinations.map { (pet, $0) } }
-            .filter { $0.1.expiresWithin30Days || $0.1.isExpired }
-        return Group {
-            if !due.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    PCSectionHeader(title: "Upcoming Vaccinations")
-                    ForEach(due, id: \.1.id) { pet, vax in
-                        Text("\(pet.name): \(vax.vaccineName)\(vax.isExpired ? " — expired" : " — due soon")")
-                            .font(.subheadline).foregroundStyle(vax.isExpired ? PCColor.errorRed : PCColor.charcoal)
-                    }
-                }
-                .pcCard()
-            }
-        }
     }
 
     private var recentObservations: some View {
@@ -211,5 +209,77 @@ struct HomeView: View {
                 .pcCard()
             }
         }
+    }
+}
+
+/// One schedule row: avatar, activity, pet, date/time and a status
+/// chip (Overdue / Due today / Tomorrow / This week / Later).
+struct ScheduleRow: View {
+    let item: ScheduleItem
+    let pet: Pet?
+
+    private var chipColor: Color {
+        switch item.status {
+        case .overdue: return PCColor.errorRed
+        case .dueToday: return PCColor.warningAmber
+        case .tomorrow: return PCColor.freshGreen
+        case .thisWeek, .later: return PCColor.secondaryText
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let pet {
+                PetAvatar(pet: pet, size: 36)
+            } else {
+                Image(systemName: item.kind.icon).foregroundStyle(PCColor.freshGreen).frame(width: 36)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title).font(.subheadline.bold()).foregroundStyle(PCColor.charcoal)
+                Text("\(item.petName) • \(item.kind.label)\(item.detail.isEmpty ? "" : " • \(item.detail)")")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+                Text(item.date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+            }
+            Spacer()
+            Text(item.status.label)
+                .font(.caption.bold()).foregroundStyle(.white)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(chipColor).clipShape(Capsule())
+        }
+        .accessibilityLabel("\(item.title), \(item.petName), \(item.date.formatted(date: .abbreviated, time: .shortened)), \(item.status.label)")
+    }
+}
+
+/// The full schedule behind Home's "View All": every item including
+/// today's doses and tasks, grouped by status in urgency order.
+struct ScheduleView: View {
+    @Query(filter: #Predicate<Pet> { !$0.isArchived }) private var pets: [Pet]
+    @Query private var tasks: [CareTask]
+    @Query private var policies: [InsurancePolicy]
+
+    private var items: [ScheduleItem] {
+        HomeSchedule.build(pets: pets, tasks: tasks, policies: policies,
+                           includeTodayActionable: true)
+    }
+
+    var body: some View {
+        List {
+            if items.isEmpty {
+                Text("Nothing scheduled in the next 30 days.")
+                    .foregroundStyle(PCColor.secondaryText)
+            }
+            ForEach(ScheduleStatus.allCases, id: \.self) { status in
+                let group = items.filter { $0.status == status }
+                if !group.isEmpty {
+                    Section(status.label) {
+                        ForEach(group) { item in
+                            ScheduleRow(item: item, pet: pets.first(where: { $0.id == item.petID }))
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Upcoming for Your Pets")
     }
 }

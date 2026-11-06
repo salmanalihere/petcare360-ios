@@ -9,7 +9,7 @@ import UserNotifications
 /// never interleave their pending-request cleanup and scheduling
 /// (v1.2.5). Pure logic, unit-tested.
 final class SyncCoordinator {
-    private let stateQueue = DispatchQueue(label: "com.petcare360.sync-coordinator")
+    private let stateQueue = DispatchQueue(label: "com.xenon-media.petcare360.sync-coordinator")
     private var running = false
     private var queued: (() -> Void)?
 
@@ -52,11 +52,15 @@ final class NotificationService {
         }
     }
 
-    private func schedule(id: String, title: String, body: String, fireDate: Date, repeatsDaily: Bool = false) {
+    private func schedule(id: String, title: String, body: String, fireDate: Date, repeatsDaily: Bool = false, soundName: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        // Custom sound only when a bundled file was resolved; iOS
+        // falls back to the system default when the name is nil.
+        // System sound/permission settings always win — this app
+        // cannot (and does not try to) force a sound to play.
+        content.sound = soundName.map { UNNotificationSound(named: UNNotificationSound.Name($0)) } ?? .default
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
         let dailyComps = Calendar.current.dateComponents([.hour, .minute], from: fireDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: repeatsDaily ? dailyComps : comps, repeats: repeatsDaily)
@@ -82,6 +86,7 @@ final class NotificationService {
     /// returns the remaining budget.
     @discardableResult
     func scheduleMedicationReminder(medication: Medication, petName: String, budget: Int = .max) -> Int {
+        guard ReminderCategory.medications.isEnabled else { return budget }
         var remaining = budget
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
@@ -96,7 +101,8 @@ final class NotificationService {
                 schedule(id: Self.doseReminderID(medicationID: medication.id, day: day, minutes: slot.minutes),
                          title: "Medication time for \(petName)",
                          body: "\(medication.name) \(medication.dosage)".trimmingCharacters(in: .whitespaces),
-                         fireDate: slot.scheduledDate)
+                         fireDate: slot.scheduledDate,
+                         soundName: NotificationSoundPreferences.resolvedFileName(species: medication.pet?.species))
                 remaining -= 1
             }
         }
@@ -174,7 +180,7 @@ final class NotificationService {
 
     /// Completed appointments never get reminders; past ones neither.
     static func shouldScheduleAppointmentReminder(_ appointment: VetAppointment) -> Bool {
-        !appointment.isCompleted && appointment.date > Date()
+        !appointment.isCompleted && !appointment.isCancelled && appointment.date > Date()
     }
 
     func rescheduleAllMedicationReminders(pets: [Pet], schedules: [MedicationSchedule], remindersEnabled: Bool, completion: (() -> Void)? = nil) {
@@ -220,28 +226,36 @@ final class NotificationService {
     }
 
     func scheduleFeedingReminder(schedule food: FoodSchedule, petName: String) {
+        guard ReminderCategory.feeding.isEnabled else { return }
         var date = Calendar.current.date(bySettingHour: food.timeMinutes / 60, minute: food.timeMinutes % 60, second: 0, of: Date()) ?? Date()
         if date < Date() { date = Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date }
         schedule(id: "feed-\(food.id.uuidString)", title: "Feeding time for \(petName)",
-                 body: "\(food.foodBrand) — \(food.portion)", fireDate: date, repeatsDaily: true)
+                 body: "\(food.foodBrand) — \(food.portion)", fireDate: date, repeatsDaily: true,
+                 soundName: NotificationSoundPreferences.resolvedFileName(species: food.pet?.species))
     }
 
-    func scheduleOneOff(id: String, title: String, body: String, fireDate: Date) {
+    func scheduleOneOff(id: String, title: String, body: String, fireDate: Date, species: PetSpecies? = nil) {
         guard fireDate > Date() else { return }
-        schedule(id: id, title: title, body: body, fireDate: fireDate)
+        if id.hasPrefix("appt-"), !ReminderCategory.appointments.isEnabled { return }
+        if id.hasPrefix("ins-"), !ReminderCategory.insurance.isEnabled { return }
+        schedule(id: id, title: title, body: body, fireDate: fireDate,
+                 soundName: NotificationSoundPreferences.resolvedFileName(species: species))
     }
 
     func scheduleVaccinationReminder(_ vaccination: VaccinationRecord, petName: String) {
         guard let exp = vaccination.expirationDate else { return }
         let fire = Calendar.current.date(byAdding: .day, value: -7, to: exp) ?? exp
+        guard ReminderCategory.vaccinations.isEnabled else { return }
         scheduleOneOff(id: "vax-\(vaccination.id.uuidString)", title: "Vaccination due soon",
-                       body: "\(petName): \(vaccination.vaccineName) expires \(exp.formatted(date: .abbreviated, time: .omitted))", fireDate: fire)
+                       body: "\(petName): \(vaccination.vaccineName) expires \(exp.formatted(date: .abbreviated, time: .omitted))", fireDate: fire,
+                       species: vaccination.pet?.species)
     }
 
     func scheduleRefillReminder(medication: Medication, petName: String) {
         let fire = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
         scheduleOneOff(id: Self.refillReminderID(medicationID: medication.id), title: "Refill reminder",
-                       body: "\(petName): \(medication.name) is running low (\(medication.remainingSupply) left)", fireDate: fire)
+                       body: "\(petName): \(medication.name) is running low (\(medication.remainingSupply) left)", fireDate: fire,
+                       species: medication.pet?.species)
     }
 
     /// Rebuilds the one-off reminder types from current data, using the
@@ -272,6 +286,14 @@ final class NotificationService {
     /// types and refill reminders.
     func synchronizeReminders(pets: [Pet], schedules: [MedicationSchedule],
                               policies: [InsurancePolicy], remindersEnabled: Bool) {
+        // Category cleanup (2026-11-06): a category the user switched
+        // off loses its pending requests at the next sync, not just
+        // its future scheduling.
+        if remindersEnabled {
+            for category in ReminderCategory.allCases where !category.isEnabled {
+                cancelPending(withPrefixes: category.pendingPrefixes)
+            }
+        }
         syncCoordinator.submit { done in
             self.rescheduleAllMedicationReminders(pets: pets, schedules: schedules,
                                                   remindersEnabled: remindersEnabled) {
@@ -292,17 +314,18 @@ final class NotificationService {
             for vax in pet.vaccinations {
                 scheduleVaccinationReminder(vax, petName: pet.name)
             }
-            for appt in pet.appointments where !appt.isCompleted && appt.date > Date() {
+            for appt in pet.appointments where Self.shouldScheduleAppointmentReminder(appt) {
                 scheduleOneOff(id: "appt-\(appt.id.uuidString)",
                                title: "Vet appointment: \(pet.name)", body: appt.title,
-                               fireDate: appt.date.addingTimeInterval(-3600))
+                               fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
             }
         }
         for policy in Self.eligibleInsurancePolicies(policies: policies, pets: pets) {
             guard let renewal = policy.renewalDate else { continue }
             let fire = Calendar.current.date(byAdding: .day, value: -14, to: renewal) ?? renewal
             scheduleOneOff(id: "ins-\(policy.id.uuidString)", title: "Insurance renewal soon",
-                           body: "\(policy.petName): \(policy.provider) renews soon", fireDate: fire)
+                           body: "\(policy.petName): \(policy.provider) renews soon", fireDate: fire,
+                           species: pets.first(where: { $0.id == policy.petID })?.species)
         }
         // Refill reminders are part of the rebuild too (v1.2.4): any
         // active medication already at/below its refill threshold gets
@@ -320,5 +343,30 @@ final class NotificationService {
 
     func cancel(ids: [String]) {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids.map { "pc360-\($0)" })
+    }
+
+    /// Cancels pending requests whose namespaced id starts with any
+    /// of the given raw prefixes (e.g. "appt-"), used when a reminder
+    /// category is switched off and by the sync's category cleanup.
+    func cancelPending(withPrefixes prefixes: [String]) {
+        let namespaced = prefixes.map { "pc360-\($0)" }
+        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
+            let ids = requests.map(\.identifier).filter { id in namespaced.contains { id.hasPrefix($0) } }
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+        }
+    }
+
+    /// Settings → "Send test notification": a real local notification
+    /// ~5 seconds out, using the sound that a reminder for the given
+    /// pet species would actually use right now.
+    func scheduleTestNotification(species: PetSpecies?) {
+        let content = UNMutableNotificationContent()
+        content.title = "PetCare 360 test notification"
+        content.body = "This is the sound your reminders will use."
+        let soundName = NotificationSoundPreferences.resolvedFileName(species: species)
+        content.sound = soundName.map { UNNotificationSound(named: UNNotificationSound.Name($0)) } ?? .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
+        let request = UNNotificationRequest(identifier: "pc360-test-\(UUID().uuidString)", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request)
     }
 }

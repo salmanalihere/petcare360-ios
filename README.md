@@ -4,7 +4,7 @@
 
 Premium native iOS app for pet health and daily care — SwiftUI, SwiftData,
 StoreKit 2, Vision (on-device OCR), PDFKit, UserNotifications and Swift Charts.
-iPhone only, iOS 17+, bundle ID placeholder `com.petcare360.app`.
+iPhone only, iOS 17+, bundle ID placeholder `com.xenon-media.petcare360`.
 
 ## The five tabs
 1. **Home** — greeting, pet summary, today's care progress, upcoming medication

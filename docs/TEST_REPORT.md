@@ -110,3 +110,26 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 - Executed: ZERO. Compilation NOT verified.
 - SYNTAX: swiftc -parse (Swift 6.0.3) 38/38 PASS; tree-sitter 38/38 PASS.
 - Details: docs/V128_FIXES_REPORT.md.
+
+## Full-audit addendum (2026-11-06)
+- Complete project audit: 4 compile-blocking defects fixed (FamilyView pendingImport shadowing ×2, MedicationEditorView alert saveError→errorMessage, RecallsView undeclared saveError), FullBackup.summary rebuilt incrementally, weekday selector locals extracted.
+- swiftc -parse 38/38 PASS; tree-sitter 38/38 PASS; per-struct alert/state sweep ALL RESOLVE.
+- Tests executed: ZERO. Xcode compilation NOT performed (Linux, no Apple SDKs).
+- Details: docs/FULL_AUDIT_REPORT.md.
+
+## Premium/onboarding addendum (2026-11-06)
+- Paywall states (loading/content/empty/failed), StoreManager load/purchase/restore separation, premium prompts at all 8 gates with post-purchase resume, onboarding Skip/Next/swipe-hint/dots.
+- 10 new tests (PetCare360PremiumTests); total 116 written, ZERO executed (no Xcode/StoreKit runtime here).
+- swiftc -parse 40/40 + tree-sitter 40/40 PASS; extended state sweep ALL RESOLVE.
+- App icon replacement BLOCKED: uploaded image not present in workspace.
+- Details: docs/PREMIUM_FIXES_REPORT.md.
+
+## Home/sounds/icons addendum (2026-11-06)
+- Centralized HomeSchedule (start-of-day appointment fix), VetAppointment.isCancelled end-to-end, 7 synthesized notification sounds with species resolution + category gates, alternate app icons (8 generated PNGs; user artwork still not received).
+- 14 new tests; total 130 written, ZERO executed. swiftc -parse 44/44 + tree-sitter 44/44 PASS; state sweep ALL RESOLVE.
+- Details: docs/HOME_SOUNDS_ICONS_REPORT.md.
+
+## Release-corrections addendum (2026-11-06)
+- Bundle ID restored to com.xenon-media.petcare360 (app/tests/uitests); CloudKit re-enabled (container iCloud.com.xenon-media.petcare360, entitlements wired); PetSpecies +reptile/+horse.
+- 7 new tests (PetCare360ReleaseTests); total 137 written, ZERO executed. swiftc -parse 45/45 + tree-sitter 45/45 PASS; state sweep ALL RESOLVE.
+- Details + external blockers (portal capability, signing profile, store migration): docs/RELEASE_CORRECTIONS_REPORT.md.

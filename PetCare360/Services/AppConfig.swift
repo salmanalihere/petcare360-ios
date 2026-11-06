@@ -5,14 +5,18 @@ import Foundation
 enum AppConfig {
     static let appName = "PetCare 360"
     static let tagline = "A healthier life together."
-    static let bundleID = "com.petcare360.app"
-    /// iCloud container reserved for a future CloudKit build
-    /// (activation steps: docs/CLOUDKIT_SETUP.md).
-    static let iCloudContainerID = "iCloud.com.petcare360.app"
-    /// CloudKit sync is NOT active in this build. It may only be switched
-    /// on after the owner completes the Apple Developer configuration in
-    /// docs/CLOUDKIT_SETUP.md — never automatically (audit rule, v1.2.2).
-    static let cloudKitSyncEnabled = false
+    static let bundleID = "com.xenon-media.petcare360"
+    /// The existing iCloud container of the registered App Store
+    /// Connect application (owner-confirmed 2026-11-06).
+    static let iCloudContainerID = "iCloud.com.xenon-media.petcare360"
+    /// CloudKit sync is ACTIVE (restored 2026-11-06 at the owner's
+    /// instruction, matching the registered app). It was disabled in
+    /// v1.2.2 because the Developer-portal setup could not be verified
+    /// from the build environment at that time. If the container
+    /// cannot be opened (missing capability/profile), PetCare360App
+    /// falls back to the local store and then to its storage-error
+    /// screen — it never crashes or deletes data.
+    static let cloudKitSyncEnabled = true
     // Legal + support details supplied by the owner on 2026-11-05.
     // NOTE: the live pages could not be fetched from the build environment
     // (the page fetcher failed and neither host is search-indexed), so the

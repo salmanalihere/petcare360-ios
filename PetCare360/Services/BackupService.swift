@@ -74,25 +74,30 @@ enum BackupService {
         var medicationSchedules: [ScheduleFull] = []
 
         var summary: [(String, Int)] {
-            var items: [(String, Int)] = []
-            items.append(("Pets", pets.count))
-            items.append(("Medications", pets.reduce(0) { total, pet in total + pet.medications.count }))
-            items.append(("Administrations", pets.reduce(0) { total, pet in total + pet.administrations.count }))
-            items.append(("Vaccinations", pets.reduce(0) { total, pet in total + pet.vaccinations.count }))
-            items.append(("Medical records", pets.reduce(0) { total, pet in total + pet.medicalRecords.count }))
-            items.append(("Documents", pets.reduce(0) { total, pet in total + pet.documents.count }))
-            items.append(("Appointments", pets.reduce(0) { total, pet in total + pet.appointments.count }))
-            items.append(("Observations", pets.reduce(0) { total, pet in total + pet.observations.count }))
-            items.append(("Expenses", pets.reduce(0) { total, pet in total + pet.expenses.count }))
-            items.append(("Feeding schedules", pets.reduce(0) { total, pet in total + pet.foodSchedules.count }))
-            items.append(("Insurance policies", insurancePolicies.count))
-            items.append(("Households", households.count))
-            items.append(("Care tasks", careTasks.count))
-            items.append(("Care handoffs", careHandoffs.count))
-            items.append(("Feeding logs", feedingLogs.count))
-            items.append(("Emergency profiles", emergencyProfiles.count))
-            items.append(("Saved brands", savedBrands.count))
-            return items.filter { $0.1 > 0 }
+            // Built incrementally with explicit appends: the previous
+            // single-expression array literal of tuples + reduce
+            // closures timed out the Swift type-checker on CI
+            // ("unable to type-check this expression in reasonable
+            // time"), so it must not be reintroduced.
+            var rows: [(String, Int)] = []
+            rows.append(("Pets", pets.count))
+            rows.append(("Medications", pets.reduce(0) { $0 + $1.medications.count }))
+            rows.append(("Administrations", pets.reduce(0) { $0 + $1.administrations.count }))
+            rows.append(("Vaccinations", pets.reduce(0) { $0 + $1.vaccinations.count }))
+            rows.append(("Medical records", pets.reduce(0) { $0 + $1.medicalRecords.count }))
+            rows.append(("Documents", pets.reduce(0) { $0 + $1.documents.count }))
+            rows.append(("Appointments", pets.reduce(0) { $0 + $1.appointments.count }))
+            rows.append(("Observations", pets.reduce(0) { $0 + $1.observations.count }))
+            rows.append(("Expenses", pets.reduce(0) { $0 + $1.expenses.count }))
+            rows.append(("Feeding schedules", pets.reduce(0) { $0 + $1.foodSchedules.count }))
+            rows.append(("Insurance policies", insurancePolicies.count))
+            rows.append(("Households", households.count))
+            rows.append(("Care tasks", careTasks.count))
+            rows.append(("Care handoffs", careHandoffs.count))
+            rows.append(("Feeding logs", feedingLogs.count))
+            rows.append(("Emergency profiles", emergencyProfiles.count))
+            rows.append(("Saved brands", savedBrands.count))
+            return rows.filter { $0.1 > 0 }
         }
     }
 
@@ -145,6 +150,9 @@ enum BackupService {
         var id: UUID; var title: String; var clinic: String; var vetName: String
         var date: Date; var notes: String; var questions: String
         var followUpDate: Date?; var isCompleted: Bool
+        /// Optional so backups written before cancellation existed
+        /// still decode (absent = not cancelled).
+        var isCancelled: Bool?
     }
     struct ObservationFull: Codable {
         var id: UUID; var kindRaw: String; var date: Date; var valueText: String
@@ -261,7 +269,8 @@ enum BackupService {
             full.appointments = pet.appointments.map {
                 AppointmentFull(id: $0.id, title: $0.title, clinic: $0.clinic, vetName: $0.vetName,
                                 date: $0.date, notes: $0.notes, questions: $0.questions,
-                                followUpDate: $0.followUpDate, isCompleted: $0.isCompleted)
+                                followUpDate: $0.followUpDate, isCompleted: $0.isCompleted,
+                                isCancelled: $0.isCancelled)
             }
             full.observations = pet.observations.map {
                 ObservationFull(id: $0.id, kindRaw: $0.kindRaw, date: $0.date, valueText: $0.valueText,
@@ -555,6 +564,7 @@ enum BackupService {
                     appt.id = item.id; appt.clinic = item.clinic; appt.vetName = item.vetName
                     appt.notes = item.notes; appt.questions = item.questions
                     appt.followUpDate = item.followUpDate; appt.isCompleted = item.isCompleted
+                    appt.isCancelled = item.isCancelled ?? false
                     appt.pet = pet
                     context.insert(appt); summary.inserted += 1
                 }

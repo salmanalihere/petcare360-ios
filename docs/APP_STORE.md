@@ -1,7 +1,7 @@
 # App Store Submission Checklist (owner steps, Mac required)
 
 1. Open `PetCare360.xcodeproj` in Xcode 15+, set your signing team; keep or
-   change the bundle ID placeholder `com.petcare360.app` consistently.
+   change the bundle ID placeholder `com.xenon-media.petcare360` consistently.
 2. Replace the PLACEHOLDER values in `PetCare360/Services/AppConfig.swift`:
    privacy policy URL, terms URL, support email — and host the privacy policy
    (draft in docs/PRIVACY_POLICY.md).
