@@ -152,6 +152,35 @@ final class PetCare360StorageDiagnosticsTests: XCTestCase {
                                      SubscriptionEntitlement.self])
     }
 
+    // MARK: F — production fallback configuration (explicit .none)
+
+    /// Exercises PetCare360App.localConfiguration — the EXACT
+    /// configuration the app's fallback path builds (explicit
+    /// cloudKitDatabase: .none), pointed at a temp URL for
+    /// isolation. Codemagic build 4 proved the schema opens
+    /// locally; this proves the production fallback SHAPE opens,
+    /// saves and reopens it. On an entitled device build this is
+    /// the configuration that must survive when the CloudKit
+    /// configuration fails validation.
+    func testF_ExplicitLocalFallbackOpensSavesReopens() throws {
+        let url = try tempStoreURL("F")
+        let schema = PetCare360App.appSchema()
+        let config = PetCare360App.localConfiguration(schema: schema, url: url)
+        do {
+            try createAndRelease(schema: schema, config: config) { ctx in
+                ctx.insert(Pet(name: "Fallback", species: .reptile))
+                try ctx.save()
+            }
+        } catch {
+            XCTFail("F failed — the explicit local fallback does not open:\n\(describeChain(error))")
+            return
+        }
+        let reopened = try reopen(schema: schema, config: config)
+        let pets = try ModelContext(reopened).fetch(FetchDescriptor<Pet>())
+        XCTAssertEqual(pets.count, 1)
+        XCTAssertEqual(pets.first?.species, .reptile)
+    }
+
     // MARK: E — default store location vs explicit URL (record-only)
 
     /// The app configures its local store WITHOUT an explicit URL
