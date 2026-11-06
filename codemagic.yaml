@@ -123,8 +123,11 @@ workflows:
       - name: Toolchain + simulator inventory
         script: |
           mkdir -p "$DIAG_DIR"
-          { xcodebuild -version; echo; xcrun simctl list devices available; } \\
-            | tee "$DIAG_DIR/00-toolchain.log"
+          {
+            xcodebuild -version
+            echo
+            xcrun simctl list devices available
+          } 2>&1 | tee "$DIAG_DIR/00-toolchain.log"
       - name: Select an available iPhone simulator
         script: |
           UDID=$(xcrun simctl list devices available -j | python3 -c "
@@ -139,31 +142,31 @@ workflows:
             echo 'ERROR: no available iPhone simulator on this image' | tee "$DIAG_DIR/00-toolchain.log"
             exit 1
           fi
-          echo "SIM_UDID=$UDID" >> $CM_ENV
+          echo "SIM_UDID=$UDID" >> "$CM_ENV"
           echo "Selected simulator UDID: $UDID"
           xcrun simctl boot "$UDID" || true
       - name: Build for testing (simulator, no signing, testability ON)
         script: |
           set -o pipefail
-          xcodebuild build-for-testing \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            CODE_SIGNING_ALLOWED=NO \\
-            ENABLE_TESTABILITY=YES \\
-            ONLY_ACTIVE_ARCH=YES \\
-            ARCHS=arm64 \\
+          xcodebuild build-for-testing \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_TESTABILITY=YES \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
             2>&1 | tee "$DIAG_DIR/01-build-for-testing.log"
       - name: Test A — minimal schema (local)
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testA_MinimalSchemaLocalCreateSaveReopen \\
-            -resultBundlePath "$DIAG_DIR/A.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testA_MinimalSchemaLocalCreateSaveReopen \
+            -resultBundlePath "$DIAG_DIR/A.xcresult" \
             2>&1 | tee "$DIAG_DIR/A.log"
           echo "testA exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
@@ -171,12 +174,12 @@ workflows:
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testB_FullSchemaLocalCreateSaveReopen \\
-            -resultBundlePath "$DIAG_DIR/B.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testB_FullSchemaLocalCreateSaveReopen \
+            -resultBundlePath "$DIAG_DIR/B.xcresult" \
             2>&1 | tee "$DIAG_DIR/B.log"
           echo "testB exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
@@ -184,12 +187,12 @@ workflows:
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD1_PetCoreGroup \\
-            -resultBundlePath "$DIAG_DIR/D1.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD1_PetCoreGroup \
+            -resultBundlePath "$DIAG_DIR/D1.xcresult" \
             2>&1 | tee "$DIAG_DIR/D1.log"
           echo "testD1 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
@@ -197,12 +200,12 @@ workflows:
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD2_InsuranceGroup \\
-            -resultBundlePath "$DIAG_DIR/D2.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD2_InsuranceGroup \
+            -resultBundlePath "$DIAG_DIR/D2.xcresult" \
             2>&1 | tee "$DIAG_DIR/D2.log"
           echo "testD2 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
@@ -210,12 +213,12 @@ workflows:
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD3_HouseholdGroup \\
-            -resultBundlePath "$DIAG_DIR/D3.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD3_HouseholdGroup \
+            -resultBundlePath "$DIAG_DIR/D3.xcresult" \
             2>&1 | tee "$DIAG_DIR/D3.log"
           echo "testD3 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
@@ -223,12 +226,12 @@ workflows:
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD4_StandaloneGroup \\
-            -resultBundlePath "$DIAG_DIR/D4.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testD4_StandaloneGroup \
+            -resultBundlePath "$DIAG_DIR/D4.xcresult" \
             2>&1 | tee "$DIAG_DIR/D4.log"
           echo "testD4 exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
@@ -236,25 +239,25 @@ workflows:
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testE_DefaultVsExplicitStoreLocation_RecordOnly \\
-            -resultBundlePath "$DIAG_DIR/E.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testE_DefaultVsExplicitStoreLocation_RecordOnly \
+            -resultBundlePath "$DIAG_DIR/E.xcresult" \
             2>&1 | tee "$DIAG_DIR/E.log"
           echo "testE exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
-      - name: Test C — CloudKit attempt (separate, record-only, EXPECTED to be limited in simulator)
+      - name: Test C — CloudKit attempt (separate, record-only, simulator-limited)
         script: |
           set +e
           test -d "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/PetCare360Tests.xctest" || { echo 'ABORT: test bundle missing - build-for-testing did not produce it. This is a BUILD failure, not a test result.'; exit 1; }
-          xcodebuild test-without-building \\
-            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \\
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \\
-            -derivedDataPath "$DERIVED_DATA" \\
-            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testC_FullSchemaCloudKitAttempt_RecordOnly \\
-            -resultBundlePath "$DIAG_DIR/C.xcresult" \\
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -only-testing:PetCare360Tests/PetCare360StorageDiagnosticsTests/testC_FullSchemaCloudKitAttempt_RecordOnly \
+            -resultBundlePath "$DIAG_DIR/C.xcresult" \
             2>&1 | tee "$DIAG_DIR/C.log"
           echo "testC exit=${PIPESTATUS[0]}" >> "$DIAG_DIR/exit-codes.txt"
           true
