@@ -133,3 +133,7 @@ list. Static suite re-run after fixes: ALL PASS. Version bumped to 1.0.1
 - Bundle ID restored to com.xenon-media.petcare360 (app/tests/uitests); CloudKit re-enabled (container iCloud.com.xenon-media.petcare360, entitlements wired); PetSpecies +reptile/+horse.
 - 7 new tests (PetCare360ReleaseTests); total 137 written, ZERO executed. swiftc -parse 45/45 + tree-sitter 45/45 PASS; state sweep ALL RESOLVE.
 - Details + external blockers (portal capability, signing profile, store migration): docs/RELEASE_CORRECTIONS_REPORT.md.
+
+## Platform-fix addendum (2026-11-06)
+- pbxproj: SDKROOT=iphoneos + SUPPORTED_PLATFORMS="iphoneos iphonesimulator" added to all 8 config blocks (diff-verified as the ONLY pbx change); scheme XML valid, refs correct; parse 45/45 PASS.
+- xcodebuild NOT run (no Xcode here) — Codemagic is the verification. Details: docs/PLATFORM_FIX_REPORT.md.
