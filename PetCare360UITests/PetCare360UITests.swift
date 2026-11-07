@@ -1,8 +1,8 @@
 import XCTest
 
-/// PetCare 360 UI tests (Phase 2). WRITTEN ONLY — they have not been
-/// executed: the build environment has no Xcode or Simulator.
-/// Run on a Mac with Cmd+U (see docs/TEST_REPORT.md).
+/// PetCare 360 UI tests (Phase 2). First executed in the
+/// 2026-11-07 Codemagic full-suite run; the onboarding helper was
+/// repaired the same day (see completeOnboardingIfNeeded).
 final class PetCare360UITests: XCTestCase {
 
     private var app: XCUIApplication!
@@ -15,18 +15,44 @@ final class PetCare360UITests: XCTestCase {
         completeOnboardingIfNeeded()
     }
 
-    /// Fresh installs show onboarding; walk through it once per test so the
-    /// journeys start from the tab bar.
+    /// Fresh installs show onboarding; complete it once per test so
+    /// the journeys start from the tab bar, and VERIFY the tab bar
+    /// actually arrived before returning.
+    ///
+    /// Repair (2026-11-07, first full-suite run): the original
+    /// helper waited for "Get Started" at launch — but that button
+    /// exists only on the LAST onboarding page, so the helper timed
+    /// out silently and every journey failed at the tab bar. The
+    /// Skip action is visible on every page (accessibility label
+    /// "Skip tutorial") and completes onboarding in one tap, so it
+    /// is preferred; paging through to Get Started is the fallback.
+    /// The helper is page-count agnostic (onboarding currently has
+    /// seven pages) and also handles later tests in the same run,
+    /// where onboarding is already completed and no Skip exists.
     private func completeOnboardingIfNeeded() {
-        let getStarted = app.buttons["Get Started"]
-        guard getStarted.waitForExistence(timeout: 3) else { return }
-        let nameField = app.textFields["Your name"]
-        if nameField.exists {
-            nameField.tap()
-            nameField.typeText("Alex")
+        let petsTab = app.tabBars.buttons["Pets"]
+        if petsTab.waitForExistence(timeout: 2) { return }
+        let skip = app.buttons["Skip tutorial"]
+        if skip.waitForExistence(timeout: 3) {
+            skip.tap()
+        } else {
+            let getStarted = app.buttons["Get Started"]
+            var attempts = 0
+            while !getStarted.exists && attempts < 8 {
+                app.swipeLeft()
+                attempts += 1
+                _ = getStarted.waitForExistence(timeout: 1)
+            }
+            let nameField = app.textFields["Your name"]
+            if nameField.exists {
+                nameField.tap()
+                nameField.typeText("Alex")
+            }
+            XCTAssertTrue(getStarted.exists, "Get Started was not reachable after paging through onboarding")
+            getStarted.tap()
         }
-        getStarted.tap()
-        XCTAssertTrue(app.tabBars.buttons["Pets"].waitForExistence(timeout: 5))
+        XCTAssertTrue(petsTab.waitForExistence(timeout: 5),
+                      "Onboarding did not complete — the tab bar never appeared")
     }
 
     func testFiveTabsExist() {

@@ -122,14 +122,20 @@ final class PetCare360HomeTests: XCTestCase {
     func testBirthdayWithinHorizonAppears() throws {
         let context = try makeContext()
         let pet = Pet(name: "Bruno", species: .dog)
-        var comps = Calendar.current.dateComponents([.month, .day], from: Date())
-        let dobYear = (Calendar.current.dateComponents([.year], from: Date()).year ?? 2026) - 4
-        comps.year = dobYear
-        // Birthday in 5 days.
-        let future = Calendar.current.date(byAdding: .day, value: 5, to: Date())!
-        var fc = Calendar.current.dateComponents([.month, .day], from: future)
-        fc.year = dobYear
-        pet.dateOfBirth = Calendar.current.date(from: fc)
+        let calendar = Calendar.current
+        // Deterministic, year-boundary safe fixture: the birthday
+        // OCCURS 5 days from today (possibly in the next calendar
+        // year). The pet turns 5 at that occurrence, so the birth
+        // year is the occurrence year minus 5 — the previous fixture
+        // used (current year − 4) while expecting "Turns 5", an
+        // off-by-one in the test, not in the age calculation.
+        let occurrence = calendar.date(byAdding: .day, value: 5, to: Date())!
+        let occurrenceParts = calendar.dateComponents([.year, .month, .day], from: occurrence)
+        var dobParts = DateComponents()
+        dobParts.year = (occurrenceParts.year ?? 2026) - 5
+        dobParts.month = occurrenceParts.month
+        dobParts.day = occurrenceParts.day
+        pet.dateOfBirth = calendar.date(from: dobParts)
         context.insert(pet)
         try context.save()
         let items = HomeSchedule.build(pets: [pet], tasks: [], policies: [], includeTodayActionable: false)

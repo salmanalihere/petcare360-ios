@@ -77,9 +77,27 @@ final class PetCare360V122Tests: XCTestCase {
 
     // MARK: CloudKit + storage handling (brief §4, §5)
 
-    func testCloudKitIsNotAutoActivated() {
-        XCTAssertFalse(AppConfig.cloudKitSyncEnabled,
-                       "CloudKit must stay off until the owner completes the Developer setup")
+    // History: this test originally asserted CloudKit stayed OFF
+    // "until the owner completes the Developer setup" (v1.2.2 era).
+    // The owner completed that setup and directed CloudKit ON on
+    // 2026-11-06 (registered container, entitlements wired, shipped
+    // in build 14). The test now pins the APPROVED configuration at
+    // the same strength — it fails if the flag, the container, or
+    // the explicit local fallback ever drifts.
+    func testCloudKitMatchesApprovedConfiguration() {
+        XCTAssertTrue(AppConfig.cloudKitSyncEnabled,
+                      "CloudKit sync is enabled per the owner's 2026-11-06 decision")
+        XCTAssertEqual(AppConfig.iCloudContainerID, "iCloud.com.xenon-media.petcare360",
+                       "The container must be the owner's registered container, exactly")
+    }
+
+    func testLocalFallbackUsesNoCloudKit() {
+        // The load-bearing storage safeguard: every fallback
+        // configuration is explicitly local (.none), never
+        // .automatic — see PetCare360App.localConfiguration.
+        let config = PetCare360App.localConfiguration(schema: PetCare360App.appSchema())
+        XCTAssertEqual(config.cloudKitDatabase, .none,
+                       "The local fallback must be configured with cloudKitDatabase: .none")
     }
 
     func testStorageFactoryBuildsAContainer() throws {
