@@ -95,13 +95,30 @@ final class PetCare360UITests: XCTestCase {
         app.tabBars.buttons["Care"].tap()
         // The Care screen's add control is a SwiftUI Menu (Add
         // medication / Add care task / Add feeding schedule), which
-        // XCTest exposes as a PopUpButton — NOT a Button (Build #4
-        // failure: querying navigationBars.buttons["plus"] found no
-        // matches). The Medical Timeline screen, by contrast, has a
-        // plain toolbar Button and correctly uses buttons["plus"].
-        let addMenu = app.navigationBars.popUpButtons.firstMatch
-        XCTAssertTrue(addMenu.waitForExistence(timeout: 3),
-                      "The Care screen's add menu was not found in the navigation bar")
+        // XCTest exposes as a PopUpButton — NOT a Button (Build #4).
+        // But it is also NOT a descendant of the navigationBar
+        // element: Build #5 proved the navigationBars-scoped
+        // PopUpButton query finds nothing. Query the whole app by
+        // type, unscoped; fall back to any element identified or
+        // labelled "plus" (the menu's only content is the plus
+        // symbol image). The Medical Timeline screen, by contrast,
+        // has a plain toolbar Button and correctly uses
+        // navigationBars.buttons["plus"].
+        var addMenu = app.popUpButtons.firstMatch
+        if !addMenu.waitForExistence(timeout: 3) {
+            addMenu = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier == 'plus' OR label == 'plus'"))
+                .firstMatch
+            _ = addMenu.waitForExistence(timeout: 2)
+        }
+        if !addMenu.exists {
+            // One-shot hierarchy dump, printed only on this failure
+            // path, so a further failure is self-diagnosing from
+            // the Codemagic log.
+            print(app.debugDescription)
+        }
+        XCTAssertTrue(addMenu.exists,
+                      "The Care screen's add menu was not found anywhere in the accessibility hierarchy")
         addMenu.tap()
         // Menu items surface as buttons or menu items depending on
         // presentation; accept either.
