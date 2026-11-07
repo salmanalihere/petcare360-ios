@@ -216,7 +216,12 @@ struct OnboardingIconPage: View {
     }
 
     private func select(_ option: AppIconOption) {
-        guard !isSelected(option) else { return }
+        // No "already selected" early return — same fix as the
+        // Settings picker (AppIcons.swift, 2026-11-08): tapping
+        // the current icon must re-apply it so iOS re-renders
+        // the Home Screen icon from the current bundle instead
+        // of keeping artwork cached under the same icon name
+        // from a previous app version.
         AppIconService.setIcon(option) { error in
             if let error {
                 errorMessage = error

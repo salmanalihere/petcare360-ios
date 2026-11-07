@@ -86,7 +86,7 @@ struct AppIconPickerSection: View {
                     }
                 }
                 .padding(.vertical, 4)
-                Text("Dog and Cat is the default icon. iOS shows its own confirmation when the icon changes.")
+                Text("Dog and Cat is the default icon. iOS shows its own confirmation when the icon changes. If the Home Screen icon looks out of date after an app update, tap the current icon again to refresh it.")
                     .font(.caption).foregroundStyle(PCColor.secondaryText)
             }
         }
@@ -105,7 +105,16 @@ struct AppIconPickerSection: View {
     }
 
     private func select(_ option: AppIconOption) {
-        guard !isSelected(option) else { return }
+        // Deliberately NO "already selected" early return
+        // (bug fix, 2026-11-08): iOS persists an alternate-icon
+        // selection BY NAME across app updates, and the Home
+        // Screen can keep rendering the artwork the name pointed
+        // to in the PREVIOUS bundle — e.g. the old generated
+        // reptile icon after the owner's turtle artwork replaced
+        // it under the same "AppIconReptile" name. Re-applying
+        // the same name is the only way to make iOS re-render
+        // the icon from the current bundle, so tapping the
+        // current icon must re-apply it, not be swallowed.
         AppIconService.setIcon(option) { error in
             if let error {
                 errorMessage = error
