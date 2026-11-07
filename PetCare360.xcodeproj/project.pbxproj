@@ -210,7 +210,7 @@
 				CODE_SIGN_ENTITLEMENTS = PetCare360/PetCare360.entitlements;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "PetCare 360 uses the camera only when you scan a veterinary document, so text can be extracted on your device.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "PetCare 360 accesses your photo library only for pet photos and document images you choose.";
@@ -234,7 +234,7 @@
 				CODE_SIGN_ENTITLEMENTS = PetCare360/PetCare360.entitlements;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "PetCare 360 uses the camera only when you scan a veterinary document, so text can be extracted on your device.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "PetCare 360 accesses your photo library only for pet photos and document images you choose.";

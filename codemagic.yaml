@@ -83,9 +83,12 @@ workflows:
             -project PetCare360.xcodeproj \
             -scheme PetCare360
 
-      - name: Generate App Store icon
-        script: |
-          bash scripts/generate_app_icon.sh
+      # Icon step REMOVED on the personalization branch (2026-11-07):
+      # scripts/generate_app_icon.sh re-rendered AppIcon-1024.png
+      # from the old AppIcon.svg, overwriting the owner's original
+      # artwork. The TestFlight build now uses the AppIcon-1024.png
+      # committed in the repository as-is. All alternate pet icons
+      # are unaffected (the script never touched them).
 
       - name: Apply App Store signing profiles
         script: |
