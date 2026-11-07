@@ -91,30 +91,49 @@ final class PetCare360V122Tests: XCTestCase {
                        "The container must be the owner's registered container, exactly")
     }
 
-    func testLocalFallbackUsesNoCloudKit() {
-        // The load-bearing storage safeguard: every fallback
-        // configuration is explicitly local (.none), never
-        // .automatic — see PetCare360App.localConfiguration.
-        // NOTE: ModelConfiguration.CloudKitDatabase is an enum
-        // WITHOUT Equatable conformance, so this is verified by
-        // pattern matching, not XCTAssertEqual (a Codemagic compile
-        // error in the first version of this test proved it).
-        let config = PetCare360App.localConfiguration(schema: PetCare360App.appSchema())
-        if case .none = config.cloudKitDatabase {
-            // Expected: explicitly local.
-        } else {
-            XCTFail("The local fallback must be configured with cloudKitDatabase: .none")
-        }
-        // The URL variant of the same factory takes a different
-        // branch and must be equally explicit.
-        let urlConfig = PetCare360App.localConfiguration(
-            schema: PetCare360App.appSchema(),
-            url: URL(fileURLWithPath: "/tmp/petcare360-fallback-check.sqlite"))
-        if case .none = urlConfig.cloudKitDatabase {
-            // Expected: explicitly local.
-        } else {
-            XCTFail("The URL-based local fallback must be configured with cloudKitDatabase: .none")
-        }
+    func testLocalFallbackUsesNoCloudKit() throws {
+        // WHY THIS TEST IS BEHAVIORAL: ModelConfiguration.CloudKitDatabase
+        // cannot be inspected in code — it has no Equatable conformance
+        // and its members are not pattern-matchable (Codemagic compile
+        // errors proved both: XCTAssertEqual AND `if case .none` demand
+        // Equatable / '~='). What CAN be verified is the behavior .none
+        // exists to guarantee — and in THIS app it is decisive: the
+        // schema is CloudKit-incompatible (11 non-optional to-many
+        // relationships), and executed diagnostic Test C proved that a
+        // CloudKit-engaging configuration THROWS when opening a store
+        // in the signed app, while diagnostic Test F proved the .none
+        // fallback opens and works. If this factory ever regressed to
+        // .automatic or .private, BOTH variants below would throw at
+        // container creation and this test would fail — the `try` calls
+        // are the assertion.
+        let schema = PetCare360App.appSchema()
+
+        // Variant 1 — explicit URL (the openStorage / resetAndReopen
+        // fallback path): a working local store must appear at exactly
+        // that URL and round-trip a record.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pc360-fallback-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let storeURL = dir.appendingPathComponent("fallback.sqlite")
+        let urlContainer = try PetCare360App.makeContainer(
+            configuration: PetCare360App.localConfiguration(schema: schema, url: storeURL))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path),
+                      "The local fallback must create its store file at the given URL")
+        let urlContext = ModelContext(urlContainer)
+        urlContext.insert(Pet(name: "FallbackProbe"))
+        try urlContext.save()
+        XCTAssertEqual(try urlContext.fetchCount(FetchDescriptor<Pet>()), 1,
+                       "The local fallback store must save and fetch records")
+
+        // Variant 2 — no URL (the default-location path): the container
+        // must open and answer queries. No records are written here —
+        // this is the app's real default store location.
+        let defaultContainer = try PetCare360App.makeContainer(
+            configuration: PetCare360App.localConfiguration(schema: schema))
+        let defaultContext = ModelContext(defaultContainer)
+        XCTAssertGreaterThanOrEqual(try defaultContext.fetchCount(FetchDescriptor<Pet>()), 0,
+                                    "The default-location local fallback must open and answer queries")
     }
 
     func testStorageFactoryBuildsAContainer() throws {
