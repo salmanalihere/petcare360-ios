@@ -55,6 +55,20 @@ final class PetCare360UITests: XCTestCase {
                       "Onboarding did not complete — the tab bar never appeared")
     }
 
+    /// SwiftUI Lists and Forms realize rows lazily: an element below
+    /// the fold may not exist in the accessibility tree at all until
+    /// it is scrolled into view (this is why the passport and paywall
+    /// journeys failed in Build #4 — the controls existed in the UI
+    /// but below the fold). Swipe up (bounded) until it exists.
+    private func scrollUntilExists(_ element: XCUIElement, maxSwipes: Int = 6) {
+        var swipes = 0
+        while !element.exists && swipes < maxSwipes {
+            app.swipeUp()
+            swipes += 1
+            _ = element.waitForExistence(timeout: 1)
+        }
+    }
+
     func testFiveTabsExist() {
         for tab in ["Home", "Pets", "Care", "Records", "Family"] {
             XCTAssertTrue(app.tabBars.buttons[tab].exists, "Missing tab: \(tab)")
@@ -79,9 +93,25 @@ final class PetCare360UITests: XCTestCase {
 
     func testCreateMedicationAndDuplicateGivenJourney() {
         app.tabBars.buttons["Care"].tap()
-        app.navigationBars.buttons["plus"].firstMatch.tap()
+        // The Care screen's add control is a SwiftUI Menu (Add
+        // medication / Add care task / Add feeding schedule), which
+        // XCTest exposes as a PopUpButton — NOT a Button (Build #4
+        // failure: querying navigationBars.buttons["plus"] found no
+        // matches). The Medical Timeline screen, by contrast, has a
+        // plain toolbar Button and correctly uses buttons["plus"].
+        let addMenu = app.navigationBars.popUpButtons.firstMatch
+        XCTAssertTrue(addMenu.waitForExistence(timeout: 3),
+                      "The Care screen's add menu was not found in the navigation bar")
+        addMenu.tap()
+        // Menu items surface as buttons or menu items depending on
+        // presentation; accept either.
         let addMedication = app.buttons["Add medication"]
-        if addMedication.waitForExistence(timeout: 2) { addMedication.tap() }
+        let addMedicationItem = app.menuItems["Add medication"]
+        if addMedication.waitForExistence(timeout: 2) {
+            addMedication.tap()
+        } else if addMedicationItem.waitForExistence(timeout: 1) {
+            addMedicationItem.tap()
+        }
         let medField = app.textFields["Medication name"]
         if medField.waitForExistence(timeout: 3) {
             medField.tap()
@@ -129,13 +159,21 @@ final class PetCare360UITests: XCTestCase {
 
     func testPaywallAndRestoreJourney() {
         app.tabBars.buttons["Family"].tap()
+        // "PetCare 360 Premium" lives in the Family list's "More"
+        // section, far below the fold; the List realizes rows lazily,
+        // so scroll until it exists (Build #4 failure).
         let premiumButton = app.buttons["PetCare 360 Premium"]
-        XCTAssertTrue(premiumButton.waitForExistence(timeout: 3))
+        scrollUntilExists(premiumButton)
+        XCTAssertTrue(premiumButton.exists, "The Family screen's Premium button was not found")
         premiumButton.tap()
-        XCTAssertTrue(app.buttons["Restore Purchases"].waitForExistence(timeout: 5))
+        // The paywall is a long ScrollView; its Restore row sits near
+        // the bottom, below the feature list and product cards.
+        let restoreButton = app.buttons["Restore Purchases"]
+        scrollUntilExists(restoreButton)
+        XCTAssertTrue(restoreButton.waitForExistence(timeout: 5))
         // Restore with the local StoreKit configuration must not crash and
         // must not fake a purchase.
-        app.buttons["Restore Purchases"].tap()
+        restoreButton.tap()
         XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 3))
     }
 
@@ -160,10 +198,18 @@ final class PetCare360UITests: XCTestCase {
         if passportLink.waitForExistence(timeout: 3) {
             passportLink.tap()
             let exportButton = app.buttons["Export Medical Passport…"]
-            if exportButton.waitForExistence(timeout: 3) {
+            scrollUntilExists(exportButton)
+            if exportButton.exists {
                 exportButton.tap()
-                XCTAssertTrue(app.buttons["Preview PDF"].waitForExistence(timeout: 3))
-                app.buttons["Preview PDF"].tap()
+                // The export sheet's Form holds 12 category toggles;
+                // "Preview PDF" sits below the fold and is not in the
+                // accessibility tree until scrolled into view
+                // (Build #4 failure).
+                let previewButton = app.buttons["Preview PDF"]
+                scrollUntilExists(previewButton)
+                XCTAssertTrue(previewButton.exists,
+                              "Preview PDF never appeared in the passport export sheet")
+                previewButton.tap()
             }
         }
     }
