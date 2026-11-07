@@ -15,7 +15,42 @@ struct PetCare360App: App {
     @State private var storage: StorageState
 
     init() {
+        Self.resetAppLocalStateForUITestingIfRequested()
         _storage = State(initialValue: Self.openStorage())
+    }
+
+    /// UI-TESTING ONLY state reset (2026-11-08). The UI tests pass
+    /// `-uiTesting -uiTestingResetState` on every launch; when —
+    /// and only when — BOTH arguments are present, the app's local
+    /// state is wiped BEFORE the store is opened: the SwiftData
+    /// store files (which carry the UserProfile whose
+    /// `hasCompletedOnboarding` flag decides onboarding vs. the
+    /// subscription gate at launch) and the app's UserDefaults
+    /// domain (sound/notification preferences, recovery ledger).
+    ///
+    /// Why this exists: UI test methods relaunch the SAME install,
+    /// so without a reset one test's completed onboarding leaked
+    /// into the next test, which then launched straight into the
+    /// subscription gate while its setup waited for onboarding
+    /// controls that could never appear. Every UI test now starts
+    /// from the true first-launch state.
+    ///
+    /// Safety: normal launches never carry these arguments, so
+    /// production behavior is unchanged. This does NOT touch
+    /// subscription enforcement — access still comes only from
+    /// verified StoreKit entitlements — and it cannot clear
+    /// StoreKit transactions (no app-side API exists); the
+    /// Codemagic full-tests workflow additionally uninstalls the
+    /// app before every UI test so the local StoreKit environment
+    /// starts empty too.
+    private static func resetAppLocalStateForUITestingIfRequested() {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("-uiTesting"),
+              arguments.contains("-uiTestingResetState") else { return }
+        StoreFileWiper.wipeStoreFiles(at: localConfiguration(schema: appSchema()).url)
+        if let bundleID = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bundleID)
+        }
     }
 
     static func appSchema() -> Schema {

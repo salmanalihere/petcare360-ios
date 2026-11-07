@@ -415,7 +415,7 @@ workflows:
             ONLY_ACTIVE_ARCH=YES \
             ARCHS=arm64 \
             2>&1 | tee "$TEST_DIR/01-build-for-testing.log"
-      - name: Run the COMPLETE unit test suite (no -only-testing filter)
+      - name: Run the COMPLETE unit test suite (UI tests run isolated below)
         script: |
           set -o pipefail
           TEST_BUNDLE=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360Tests.xctest" -print -quit 2>/dev/null)
@@ -430,16 +430,59 @@ workflows:
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
             -derivedDataPath "$DERIVED_DATA" \
             -resultBundlePath "$TEST_DIR/FullSuite.xcresult" \
+            -skip-testing:PetCare360UITests \
             2>&1 | tee "$TEST_DIR/02-full-tests.log"
+      - name: Run each UI test on a FRESH app install (isolated StoreKit + app state)
+        script: |
+          # UI test methods relaunch the same install, so app data
+          # (completed onboarding) and local StoreKit transactions
+          # (a purchase) otherwise leak from one test into the
+          # next — a later test then launches straight into the
+          # subscription gate, or past it, instead of first launch.
+          # StoreKit test transactions live outside the app's data
+          # and cannot be cleared by the app or the test runner, so
+          # each UI test gets a fresh install: uninstalling removes
+          # both the app data and the local StoreKit transactions.
+          # The list of tests is discovered from the source, so a
+          # newly added UI test is picked up automatically.
+          mkdir -p "$TEST_DIR/ui"
+          UI_METHODS=$(grep -oE 'func test[A-Za-z0-9_]*' PetCare360UITests/PetCare360UITests.swift | sed 's/^func //' | sort -u)
+          if [ -z "$UI_METHODS" ]; then
+            echo "ABORT: no UI test methods discovered in PetCare360UITests.swift"
+            exit 1
+          fi
+          echo "Discovered UI tests:"
+          echo "$UI_METHODS"
+          FAILED=0
+          for METHOD in $UI_METHODS; do
+            echo "================ UI TEST: $METHOD (fresh install) ================"
+            xcrun simctl uninstall "$SIM_UDID" com.xenon-media.petcare360 >/dev/null 2>&1 || true
+            set -o pipefail
+            if ! xcodebuild test-without-building \
+              -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+              -destination "platform=iOS Simulator,id=$SIM_UDID" \
+              -derivedDataPath "$DERIVED_DATA" \
+              -resultBundlePath "$TEST_DIR/ui/$METHOD.xcresult" \
+              -only-testing:"PetCare360UITests/PetCare360UITests/$METHOD" \
+              2>&1 | tee "$TEST_DIR/ui/$METHOD.log"; then
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more UI tests failed — see $TEST_DIR/ui/*.log"
+            exit 1
+          fi
       - name: Summary — executed counts from the real log
         script: |
           {
             echo '================ FULL TEST SUMMARY ================'
-            grep -E "Test Suite '.*' (passed|failed)" "$TEST_DIR/02-full-tests.log" 2>/dev/null || echo '(no suite lines — see log)'
-            grep -E "Executed [0-9]+ tests" "$TEST_DIR/02-full-tests.log" 2>/dev/null | tail -3 || true
-            grep -E "Test Case .* failed" "$TEST_DIR/02-full-tests.log" 2>/dev/null || echo '(no failed test-case lines)'
+            grep -E "Test Suite '.*' (passed|failed)" "$TEST_DIR/02-full-tests.log" "$TEST_DIR"/ui/*.log 2>/dev/null || echo '(no suite lines — see log)'
+            grep -E "Executed [0-9]+ tests" "$TEST_DIR/02-full-tests.log" "$TEST_DIR"/ui/*.log 2>/dev/null | tail -12 || true
+            grep -E "Test Case .* failed" "$TEST_DIR/02-full-tests.log" "$TEST_DIR"/ui/*.log 2>/dev/null || echo '(no failed test-case lines)'
           } | tee "$TEST_DIR/99-summary.log"
           true
     artifacts:
       - build/full-tests/*.log
       - build/full-tests/*.xcresult
+      - build/full-tests/ui/*.log
+      - build/full-tests/ui/*.xcresult
