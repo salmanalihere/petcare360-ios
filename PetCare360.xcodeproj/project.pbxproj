@@ -61,7 +61,7 @@
 		B00000000000000000000104 /* PetCare360UITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000103 /* PetCare360UITests.swift */; };
 		B00000000000000000000108 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000107 /* Assets.xcassets */; };
 		B00000000000000000000110 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000109 /* PrivacyInfo.xcprivacy */; };
-		B00000000000000000009018 /* PetCare360.storekit in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000111 /* PetCare360.storekit */; };
+		B00000000000000000009901 /* PetCare360.storekit in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000111 /* PetCare360.storekit */; };
 		B00000000000000000000114 /* petcare-bird.wav in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000113 /* petcare-bird.wav */; };
 		B00000000000000000000116 /* petcare-cat.wav in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000115 /* petcare-cat.wav */; };
 		B00000000000000000000118 /* petcare-chime.wav in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000117 /* petcare-chime.wav */; };
@@ -174,7 +174,7 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		B00000000000000000009011 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000108 /* Assets.xcassets in Resources */, B00000000000000000000110 /* PrivacyInfo.xcprivacy in Resources */, B00000000000000000000114 /* petcare-bird.wav in Resources */, B00000000000000000000116 /* petcare-cat.wav in Resources */, B00000000000000000000118 /* petcare-chime.wav in Resources */, B00000000000000000000120 /* petcare-dog.wav in Resources */, B00000000000000000000122 /* petcare-horse.wav in Resources */, B00000000000000000000124 /* petcare-rabbit.wav in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-		B00000000000000000009017 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000009018 /* PetCare360.storekit in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+		B00000000000000000009017 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000009901 /* PetCare360.storekit in Resources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
