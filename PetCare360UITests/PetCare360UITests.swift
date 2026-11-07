@@ -33,36 +33,55 @@ final class PetCare360UITests: XCTestCase {
     /// the journeys start from the tab bar, and VERIFY the tab bar
     /// actually arrived before returning.
     ///
-    /// Repair (2026-11-07, first full-suite run): the original
-    /// helper waited for "Get Started" at launch — but that button
-    /// exists only on the LAST onboarding page, so the helper timed
-    /// out silently and every journey failed at the tab bar. The
-    /// Skip action is visible on every page (accessibility label
-    /// "Skip tutorial") and completes onboarding in one tap, so it
-    /// is preferred; paging through to Get Started is the fallback.
-    /// The helper is page-count agnostic (onboarding currently has
-    /// seven pages) and also handles later tests in the same run,
-    /// where onboarding is already completed and no Skip exists.
+    /// Repair history: (2026-11-07) the original helper waited for
+    /// "Get Started" at launch — it exists only on the LAST page.
+    /// (2026-11-08) the Skip-first/swipe-fallback version failed on
+    /// every test: it allowed 3s for the Skip button at cold
+    /// launch (first render on CI can take longer, now that
+    /// StoreKit resolves real products from the scheme
+    /// configuration during launch), then swiped blindly, typed
+    /// the name, and asserted "Get Started" existed with NO wait
+    /// while the keyboard was still up — the one-two punch that
+    /// produced "Get Started was not reachable after paging
+    /// through onboarding" at the assert. This version is
+    /// state-driven: wait for onboarding landmarks, prefer Skip
+    /// (shown on every page), otherwise advance with the app's
+    /// OWN Next button to the final page, enter the name, dismiss
+    /// the keyboard, and wait for Get Started before tapping it.
+    /// Failure messages embed the accessibility hierarchy so the
+    /// stuck screen is visible in the log.
     private func completeOnboardingIfNeeded() {
         let petsTab = app.tabBars.buttons["Pets"]
         if petsTab.waitForExistence(timeout: 2) { return }
+
         let skip = app.buttons["Skip tutorial"]
-        if skip.waitForExistence(timeout: 3) {
+        let next = app.buttons["Next"]
+        let nameField = app.textFields["Your name"]
+        let onboardingShown = skip.waitForExistence(timeout: 15) || next.exists || nameField.exists
+        XCTAssertTrue(onboardingShown, "Onboarding never appeared: \(app.debugDescription)")
+
+        if skip.exists {
             skip.tap()
         } else {
+            var taps = 0
+            while !nameField.exists && taps < 8 {
+                guard next.waitForExistence(timeout: 2) else { break }
+                next.tap()
+                taps += 1
+                _ = nameField.waitForExistence(timeout: 1)
+            }
+            XCTAssertTrue(nameField.waitForExistence(timeout: 5),
+                          "The final onboarding page (name field) was not reachable: \(app.debugDescription)")
+            nameField.tap()
+            nameField.typeText("Alex")
+            // Dismiss the keyboard before looking for Get Started:
+            // with the keyboard up, the button below the field can
+            // be pushed out of the visible area and out of the
+            // accessibility tree entirely.
+            app.swipeDown()
             let getStarted = app.buttons["Get Started"]
-            var attempts = 0
-            while !getStarted.exists && attempts < 8 {
-                app.swipeLeft()
-                attempts += 1
-                _ = getStarted.waitForExistence(timeout: 1)
-            }
-            let nameField = app.textFields["Your name"]
-            if nameField.exists {
-                nameField.tap()
-                nameField.typeText("Alex")
-            }
-            XCTAssertTrue(getStarted.exists, "Get Started was not reachable after paging through onboarding")
+            XCTAssertTrue(getStarted.waitForExistence(timeout: 5),
+                          "Get Started was not reachable on the final onboarding page: \(app.debugDescription)")
             getStarted.tap()
         }
         passSubscriptionGateIfNeeded()
