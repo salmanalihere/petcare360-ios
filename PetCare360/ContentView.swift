@@ -8,8 +8,6 @@ struct ContentView: View {
     @Query private var allSchedules: [MedicationSchedule]
     @Query private var allPolicies: [InsurancePolicy]
     @State private var didInitialReminderSync = false
-    @State private var showTrialExpiredPaywall = false
-    @State private var didPresentTrialExpired = false
     @StateObject private var store = StoreManager()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -17,7 +15,14 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if hasOnboarded {
+            if !hasOnboarded {
+                OnboardingView()
+            } else if !store.accessState.isResolved {
+                // Entitlements not yet read: show a loading screen.
+                // The app is NEVER shown — and never declared
+                // locked — on an unresolved state.
+                SubscriptionCheckingView()
+            } else if store.hasPremiumAccess {
                 TabView {
                     HomeView()
                         .tabItem { Label("Home", systemImage: "house") }
@@ -32,26 +37,19 @@ struct ContentView: View {
                 }
                 .tint(PCColor.deepTeal)
             } else {
-                OnboardingView()
+                // Subscription-only model (2026-11-08): without an
+                // active Apple subscription entitlement the whole
+                // app is locked behind the mandatory subscription
+                // screen. All data stays stored on the device,
+                // untouched, behind this gate.
+                SubscriptionGateView()
             }
         }
         .environmentObject(store)
         .background(PCColor.warmIvory)
-        .sheet(isPresented: $showTrialExpiredPaywall) { PaywallView().environmentObject(store) }
-        .onAppear {
-            // Trial expired (2026-11-07): show the subscription
-            // screen ONCE per launch. It is dismissible and locks
-            // nothing — the free plan keeps working underneath.
-            if hasOnboarded, !didPresentTrialExpired,
-               case .expired = store.trial.state, !store.isPremium {
-                didPresentTrialExpired = true
-                showTrialExpiredPaywall = true
-            }
-        }
         .onAppear {
             guard !didInitialReminderSync else { return }
             didInitialReminderSync = true
-            resolveTrialOnce()
             syncReminders()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -60,29 +58,12 @@ struct ContentView: View {
             // verified StoreKit entitlements whenever we come back.
             if phase == .active {
                 Task { await store.refreshEntitlements() }
-                // Trial resolution retry: if the first launch could
-                // not read the store (fetch error), decide on the
-                // next foreground return instead of guessing.
-                resolveTrialOnce()
                 // Rolling reminder replenishment: rebuild the next 7 days
                 // of medication reminders every time the app comes to the
                 // foreground (v1.2.2 — no editor visit required).
                 syncReminders()
             }
         }
-    }
-
-    /// One-time trial resolution (migration policy, 2026-11-07):
-    /// if a user profile already exists in the store, this install
-    /// belongs to an existing user upgrading from a version without
-    /// a trial — record the migration, do NOT start a trial. Only a
-    /// genuinely new install begins the 7 days. A failed fetch
-    /// defers the decision (retried on foreground) rather than
-    /// guessing in either direction.
-    private func resolveTrialOnce() {
-        guard !store.trial.hasRecordedDecision else { return }
-        guard let count = try? modelContext.fetchCount(FetchDescriptor<UserProfile>()) else { return }
-        store.trial.resolveInitialState(hasExistingData: count > 0)
     }
 
     /// One idempotent reminder-sync entry point used by initial launch

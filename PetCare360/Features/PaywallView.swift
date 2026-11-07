@@ -61,19 +61,22 @@ struct PaywallView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if store.trial.isActive {
+                    if case .active(_, let expiration, true, _, _) = store.accessState {
+                        // The current period is the introductory
+                        // FREE trial from App Store Connect (Apple's
+                        // offer, not an app-managed countdown).
                         VStack(alignment: .leading, spacing: 4) {
-                            Label("Free trial — \(store.trial.daysRemaining) day\(store.trial.daysRemaining == 1 ? "" : "s") left", systemImage: "gift.fill")
+                            Label("Free trial active", systemImage: "gift.fill")
                                 .font(.headline).foregroundStyle(PCColor.deepTeal)
-                            Text("You already have full Premium access until \(store.trial.endsAt?.formatted(date: .abbreviated, time: .omitted) ?? ""). Subscribing now starts billing when you confirm — the trial itself never charges you.")
+                            Text("Your Apple free trial ends \(expiration?.formatted(date: .abbreviated, time: .omitted) ?? "soon"). After that your subscription continues at the plan price unless you cancel — cancelling keeps your access until the end of the trial.")
                                 .font(.subheadline).foregroundStyle(PCColor.secondaryText)
                         }
                         .pcCard()
-                    } else if !store.isPremium, case .expired = store.trial.state {
+                    } else if case .inactive(let billingIssue) = store.accessState, billingIssue {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Your 7-day free trial has ended")
-                                .font(.headline).foregroundStyle(PCColor.deepTeal)
-                            Text("Subscribe to keep the Premium features. Your pets, records and documents are all still here — nothing was deleted, and viewing, editing and exporting what you already have is never locked.")
+                            Label("Billing problem", systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline).foregroundStyle(PCColor.errorRed)
+                            Text("Apple could not collect payment for your subscription. Update your payment method in your Apple ID subscription settings to keep your access.")
                                 .font(.subheadline).foregroundStyle(PCColor.secondaryText)
                         }
                         .pcCard()
@@ -143,7 +146,7 @@ struct PaywallView: View {
                         Link("Terms of Use", destination: AppConfig.termsOfUseURL)
                     }
                     .font(.subheadline)
-                    Text("Free plan: one pet, basic care reminders, basic medication tracking, basic medical records, limited document storage and the basic health timeline — plus the emergency screen, always free.")
+                    Text("PetCare 360 is subscription-only: an active subscription unlocks the complete app. Cancelling keeps your full access until the end of the paid period, and your pets and records are never deleted.")
                         .font(.caption).foregroundStyle(PCColor.secondaryText)
                 }
                 .padding()

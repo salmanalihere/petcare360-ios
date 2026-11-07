@@ -19,7 +19,13 @@
           "familyShareable": false,
           "groupNumber": 1,
           "internalID": "PCMONTHLY1",
-          "introductoryOffer": null,
+          "introductoryOffer": {
+            "displayPrice": "0.00",
+            "internalID": "PCINTRO_PCMONTHLY1",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P7D"
+          },
           "localizations": [
             {
               "description": "Unlimited pets, household coordination and caregiver roles on this device, medication tracking and history, document scanning, expenses, insurance organizer, advanced charts, emergency QR profile, advanced PDF exports and recall tracking.",
@@ -40,7 +46,13 @@
           "familyShareable": false,
           "groupNumber": 1,
           "internalID": "PCYEARLY1",
-          "introductoryOffer": null,
+          "introductoryOffer": {
+            "displayPrice": "0.00",
+            "internalID": "PCINTRO_PCYEARLY1",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P7D"
+          },
           "localizations": [
             {
               "description": "Everything in Premium Monthly, billed once a year.",

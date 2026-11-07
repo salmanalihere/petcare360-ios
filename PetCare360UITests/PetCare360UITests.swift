@@ -1,14 +1,36 @@
 import XCTest
+import StoreKitTest
 
 /// PetCare 360 UI tests (Phase 2). First executed in the
 /// 2026-11-07 Codemagic full-suite run; the onboarding helper was
 /// repaired the same day (see completeOnboardingIfNeeded).
+/// Subscription-only model (2026-11-08): setUp pre-purchases a
+/// subscription in the local StoreKit test environment so the
+/// journeys run inside the unlocked app (see below).
 final class PetCare360UITests: XCTestCase {
 
     private var app: XCUIApplication!
+    private var storeKitSession: SKTestSession?
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         continueAfterFailure = false
+        // The app is subscription-only: without an entitlement every
+        // journey would stop at the mandatory subscription screen.
+        // Buy the monthly plan through StoreKit's TEST environment
+        // (the scheme's local .storekit configuration, also copied
+        // into this test bundle) BEFORE launching the app. This is
+        // fail-soft by design: if the session cannot start, the
+        // journeys fail on their own assertions exactly as they
+        // would without an entitlement — never silently pass.
+        do {
+            let session = try SKTestSession(configurationFileNamed: "PetCare360")
+            session.resetToDefaultState()
+            session.disableDialogs = true
+            _ = try await session.buyProduct(identifier: "com.petcare360.premium.monthly")
+            storeKitSession = session
+        } catch {
+            storeKitSession = nil
+        }
         app = XCUIApplication()
         app.launchArguments += ["-uiTesting"]
         app.launch()

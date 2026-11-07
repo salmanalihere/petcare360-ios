@@ -30,6 +30,11 @@ enum AppConfig {
         URL(string: "mailto:\(supportEmail)?subject=PetCare%20360%20Support")!
     }
     static let fdaRecallsURL = URL(string: "https://www.fda.gov/animal-veterinary/safety-health/recalls-withdrawals")!
+    /// The App Store Connect subscription group "PetCare 360
+    /// Premium" (owner-verified 2026-11-07). StoreKit reads the
+    /// group's subscription statuses (renewal, grace period,
+    /// billing retry) through this ID.
+    static let subscriptionGroupID = "22553779"
     static let medicalDisclaimer = "PetCare 360 is a record-keeping and tracking tool. It does not provide veterinary diagnosis or treatment. Always consult a licensed veterinarian about your pet's health."
 }
 
@@ -89,12 +94,14 @@ enum EntitlementPolicy {
     static func canCreate(_ feature: PremiumFeature, isPremium: Bool) -> Bool {
         isPremium
     }
-    /// Full Premium access = a verified StoreKit entitlement OR an
-    /// active app-managed free trial (2026-11-07). A purchase is
-    /// never required for trial access and trial access never fakes
-    /// a purchase: `isPremium` stays purchase-only everywhere it is
-    /// reported as such (e.g. the paywall's purchase completion).
-    static func hasAccess(isPremium: Bool, trialActive: Bool) -> Bool {
-        isPremium || trialActive
+    /// Full access = a verified Apple subscription entitlement,
+    /// nothing else (subscription-only model, 2026-11-08). The
+    /// entitlement already includes the introductory free trial,
+    /// the billing grace period and a cancelled-but-unexpired
+    /// subscription, because StoreManager derives it from
+    /// StoreKit's verified current entitlements and subscription
+    /// statuses. There is no app-managed trial and no free tier.
+    static func hasAccess(isPremium: Bool) -> Bool {
+        isPremium
     }
 }

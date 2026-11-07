@@ -78,8 +78,8 @@ struct CareTeamView: View {
             Section {
                 Text("Manage everyone who helps care for your pets.")
                     .font(.subheadline).foregroundStyle(PCColor.secondaryText)
-                if store.trial.isActive {
-                    Label("Free trial — \(store.trial.daysRemaining) day\(store.trial.daysRemaining == 1 ? "" : "s") left. Every feature is unlocked.", systemImage: "gift.fill")
+                if case .active(_, let expiration, true, _, _) = store.accessState {
+                    Label("Free trial — ends \(expiration?.formatted(date: .abbreviated, time: .omitted) ?? "soon"). Every feature is unlocked.", systemImage: "gift.fill")
                         .font(.subheadline).foregroundStyle(PCColor.freshGreen)
                 } else if !store.hasPremiumAccess {
                     Text("Household coordination is a Premium feature and unlocks when you subscribe.")
@@ -481,18 +481,15 @@ struct SettingsView: View {
             Section("Premium") {
                 if store.isPremium {
                     Label("Premium active", systemImage: "checkmark.seal.fill").foregroundStyle(PCColor.freshGreen)
-                } else if store.trial.isActive {
-                    Label("Free trial — \(store.trial.daysRemaining) day\(store.trial.daysRemaining == 1 ? "" : "s") left", systemImage: "gift.fill")
-                        .foregroundStyle(PCColor.freshGreen)
-                    Text("Every Premium feature is unlocked during your trial. No payment is due and nothing will be charged when it ends.")
-                        .font(.caption).foregroundStyle(PCColor.secondaryText)
-                } else if store.trial.state == .expired {
-                    Text("Your free trial has ended. Your pets and records are all still here — subscribing unlocks the Premium features again.")
-                        .font(.caption).foregroundStyle(PCColor.secondaryText)
+                    if case .active(_, let expiration, true, _, _) = store.accessState {
+                        Text("You're in your Apple free-trial period, ending \(expiration?.formatted(date: .abbreviated, time: .omitted) ?? "soon"). After that, your subscription continues at the plan price unless you cancel — cancelling keeps access until the end of the trial.")
+                            .font(.caption).foregroundStyle(PCColor.secondaryText)
+                    }
                 } else {
-                    // Includes migrated existing users (.notApplicable):
-                    // they never had a trial, so nothing claims one ended.
-                    Text("You're on the free plan. Premium unlocks unlimited pets, household coordination, scanning, advanced charts and PDF exports.")
+                    // Defensive copy: Settings sits behind the
+                    // subscription gate, so this is unreachable in
+                    // normal use. PetCare 360 has no free plan.
+                    Text("You don't have an active subscription. PetCare 360 is subscription-only — an active subscription unlocks the complete app.")
                         .font(.caption).foregroundStyle(PCColor.secondaryText)
                 }
                 Button("Premium Subscription") { showPaywall = true }
