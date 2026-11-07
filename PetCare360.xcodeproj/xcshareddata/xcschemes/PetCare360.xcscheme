@@ -23,6 +23,8 @@
             </BuildableReference>
          </TestableReference>
       </Testables>
+      <StoreKitConfigurationFileReference identifier = "../../PetCare360/PetCare360.storekit">
+      </StoreKitConfigurationFileReference>
    </TestAction>
    <LaunchAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
       <BuildableProductRunnable runnableDebuggingMode = "0">
