@@ -201,7 +201,7 @@ final class StoreManager: ObservableObject {
             expirationDate: transaction.expirationDate,
             revocationDate: transaction.revocationDate,
             isIntroductoryPeriod: transaction.offerType == .introductory,
-            isFreeTrialOffer: isFreeTrialOffer ?? false,
+            isFreeTrialOffer: isFreeTrialOffer,
             inGracePeriod: inGracePeriod,
             inBillingRetry: inBillingRetry,
             willAutoRenew: willAutoRenew)
