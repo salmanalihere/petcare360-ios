@@ -15,7 +15,7 @@ final class PetCare360V126Tests: XCTestCase {
 
     private func makeContext() throws -> ModelContext {
         let container = try PetCare360App.makeContainer(
-            configuration: ModelConfiguration(isStoredInMemoryOnly: true))
+            configuration: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
         return ModelContext(container)
     }
 
@@ -123,7 +123,7 @@ final class PetCare360V126Tests: XCTestCase {
     /// the platform cannot create the failing configuration.
     func testRealSaveFailureThrows() throws {
         let url = URL(fileURLWithPath: "/proc/petcare360-v126/store.sqlite")
-        let config = ModelConfiguration(schema: PetCare360App.appSchema(), url: url)
+        let config = ModelConfiguration(schema: PetCare360App.appSchema(), url: url, cloudKitDatabase: .none)
         guard let container = try? PetCare360App.makeContainer(configuration: config) else {
             throw XCTSkip("Platform does not allow the unwritable-store injection")
         }

@@ -10,7 +10,7 @@ final class PetCare360V124Tests: XCTestCase {
 
     private func makeContext() throws -> ModelContext {
         let container = try PetCare360App.makeContainer(
-            configuration: ModelConfiguration(isStoredInMemoryOnly: true))
+            configuration: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
         return ModelContext(container)
     }
 

@@ -68,7 +68,8 @@ final class PetCare360RecoveryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let config = ModelConfiguration(
             schema: PetCare360App.appSchema(),
-            url: dir.appendingPathComponent("test.store"))
+            url: dir.appendingPathComponent("test.store"),
+            cloudKitDatabase: .none)
 
         // Creation + insert.
         let first = try PetCare360App.makeContainer(configuration: config)
@@ -92,5 +93,55 @@ final class PetCare360RecoveryTests: XCTestCase {
         try ctx2.save()
         pets = try ctx2.fetch(FetchDescriptor<Pet>())
         XCTAssertTrue(pets.isEmpty)
+    }
+
+    // MARK: Regression — full schema on an explicitly local-only store
+
+    /// REGRESSION (2026-11-08): the FULL production schema must
+    /// open, save, close, and reopen on an explicitly local-only
+    /// configuration (`cloudKitDatabase: .none` written out here,
+    /// independently of the production factory, so a drift in
+    /// either is caught). The records saved include the very
+    /// relationships CloudKit rejects (Household.members, a Pet),
+    /// proving local storage is unaffected by the CloudKit schema
+    /// limitation. History: when the test builds became ad-hoc
+    /// signed (entitled binary), every test configuration that
+    /// silently relied on ModelConfiguration's `.automatic`
+    /// default began engaging CloudKit and throwing the
+    /// relationship-optionality error — including the previous
+    /// version of the CRUD test above. This test pins the
+    /// explicit-local shape so that class of failure cannot
+    /// return unnoticed.
+    func testFullSchemaOpensSavesReopensWithExplicitLocalOnlyConfiguration() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pc360-localonly-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config = ModelConfiguration(
+            schema: PetCare360App.appSchema(),
+            url: dir.appendingPathComponent("localonly.store"),
+            cloudKitDatabase: .none)
+
+        // Open + save, then FULLY release before reopening.
+        var first: ModelContainer? = try PetCare360App.makeContainer(configuration: config)
+        let ctx1 = ModelContext(first!)
+        let household = Household()
+        let member = HouseholdMember(displayName: "Regression", role: .owner)
+        member.household = household
+        ctx1.insert(household)
+        ctx1.insert(member)
+        ctx1.insert(Pet(name: "LocalOnly", species: .cat))
+        try ctx1.save()
+        first = nil
+
+        // Reopen: records AND the relationship must survive.
+        let second = try PetCare360App.makeContainer(configuration: config)
+        let ctx2 = ModelContext(second)
+        XCTAssertEqual(try ctx2.fetchCount(FetchDescriptor<Pet>()), 1)
+        let households = try ctx2.fetch(FetchDescriptor<Household>())
+        XCTAssertEqual(households.count, 1)
+        XCTAssertEqual(households.first?.members.count, 1,
+                       "The Household.members relationship must round-trip on the local-only store")
+        XCTAssertEqual(households.first?.members.first?.displayName, "Regression")
     }
 }

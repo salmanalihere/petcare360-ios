@@ -93,7 +93,7 @@ final class PetCare360ReleaseTests: XCTestCase {
 
     func testNewSpeciesSurviveBackupRoundTrip() throws {
         let container = try PetCare360App.makeContainer(
-            configuration: ModelConfiguration(isStoredInMemoryOnly: true))
+            configuration: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
         let context = ModelContext(container)
         let gecko = Pet(name: "Gex", species: .reptile)
         let mare = Pet(name: "Willow", species: .horse)

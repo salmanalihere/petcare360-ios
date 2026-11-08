@@ -137,7 +137,7 @@ final class PetCare360V122Tests: XCTestCase {
     }
 
     func testStorageFactoryBuildsAContainer() throws {
-        let config = ModelConfiguration(schema: PetCare360App.appSchema(), isStoredInMemoryOnly: true)
+        let config = ModelConfiguration(schema: PetCare360App.appSchema(), isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try PetCare360App.makeContainer(configuration: config)
         XCTAssertNotNil(container, "The storage factory must produce a working container for a valid configuration")
     }

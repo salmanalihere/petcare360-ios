@@ -43,6 +43,24 @@ final class PetCare360StorageDiagnosticsTests: XCTestCase {
         StorageDiagnostics.describe(error, prefix: "DIAGNOSTIC")
     }
 
+    /// The shared LOCAL-ONLY configuration factory for tests A, B
+    /// and D. `cloudKitDatabase: .none` is explicit and
+    /// load-bearing: ModelConfiguration's default is `.automatic`,
+    /// which engages CloudKit mirroring whenever the app binary
+    /// carries the iCloud entitlement — and since the full-tests
+    /// workflow began ad-hoc signing the app (for StoreKit), the
+    /// test host DOES carry it, so an `.automatic` "local" config
+    /// runs CloudKit's schema validation and throws on this
+    /// schema's non-optional relationships. (Test B's pass in
+    /// diagnostic Build 4 was an artifact of the then-UNSIGNED
+    /// build, where `.automatic` silently stayed local.) Test F
+    /// separately exercises the production factory
+    /// (PetCare360App.localConfiguration, also `.none`); test C
+    /// alone intentionally uses CloudKit.
+    private func localConfig(schema: Schema, url: URL) -> ModelConfiguration {
+        ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)
+    }
+
     /// Create a container, run `work`, then FULLY release the
     /// container (and its context) before returning — the caller
     /// may then reopen the same store safely.
@@ -65,7 +83,7 @@ final class PetCare360StorageDiagnosticsTests: XCTestCase {
     func testA_MinimalSchemaLocalCreateSaveReopen() throws {
         let url = try tempStoreURL("A")
         let schema = Schema([DiagnosticPet.self])
-        let config = ModelConfiguration(schema: schema, url: url)
+        let config = localConfig(schema: schema, url: url)
         do {
             try createAndRelease(schema: schema, config: config) { ctx in
                 ctx.insert(DiagnosticPet(name: "diag"))
@@ -85,7 +103,7 @@ final class PetCare360StorageDiagnosticsTests: XCTestCase {
     func testB_FullSchemaLocalCreateSaveReopen() throws {
         let url = try tempStoreURL("B")
         let schema = PetCare360App.appSchema()
-        let config = ModelConfiguration(schema: schema, url: url)
+        let config = localConfig(schema: schema, url: url)
         do {
             try createAndRelease(schema: schema, config: config) { ctx in
                 ctx.insert(Pet(name: "Diag", species: .dog))
@@ -122,7 +140,7 @@ final class PetCare360StorageDiagnosticsTests: XCTestCase {
         do {
             let url = try tempStoreURL(label)
             let schema = Schema(types)
-            let config = ModelConfiguration(schema: schema, url: url)
+            let config = localConfig(schema: schema, url: url)
             try createAndRelease(schema: schema, config: config)
             _ = try reopen(schema: schema, config: config)
         } catch {
@@ -183,18 +201,20 @@ final class PetCare360StorageDiagnosticsTests: XCTestCase {
 
     // MARK: E — default store location vs explicit URL (record-only)
 
-    /// The app configures its local store WITHOUT an explicit URL
-    /// (SwiftData's default location inside the app sandbox), while
-    /// tests A/B/D use explicit temporary URLs. If A/B/D pass but
-    /// the app still fails, this comparison isolates the default
-    /// location itself. Record-only: it prints BOTH outcomes with
+    /// The app's local fallback store is configured WITHOUT an
+    /// explicit URL (SwiftData's default location inside the app
+    /// sandbox), while tests A/B/D use explicit temporary URLs.
+    /// Both halves here use the production fallback factory
+    /// (explicit .none) — the configuration whose locations
+    /// actually matter. If A/B/D pass but the app still fails,
+    /// this comparison isolates the default location itself. Record-only: it prints BOTH outcomes with
     /// full chains; the default-location store files it creates
     /// are removed again at the end. SIMULATOR/TEST USE ONLY.
     func testE_DefaultVsExplicitStoreLocation_RecordOnly() throws {
         let schema = PetCare360App.appSchema()
 
         let url = try tempStoreURL("E")
-        let explicit = ModelConfiguration(schema: schema, url: url)
+        let explicit = PetCare360App.localConfiguration(schema: schema, url: url)
         do {
             try createAndRelease(schema: schema, config: explicit)
             print("DIAGNOSTIC E: explicit temp URL (\(url.path)) — OPENED")
@@ -202,7 +222,7 @@ final class PetCare360StorageDiagnosticsTests: XCTestCase {
             print("DIAGNOSTIC E: explicit temp URL — FAILED:\n\(describeChain(error))")
         }
 
-        let defaultConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let defaultConfig = PetCare360App.localConfiguration(schema: schema)
         print("DIAGNOSTIC E: default store URL = \(defaultConfig.url.path)")
         do {
             try createAndRelease(schema: schema, config: defaultConfig)
