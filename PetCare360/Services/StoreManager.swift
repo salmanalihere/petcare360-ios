@@ -91,9 +91,10 @@ final class StoreManager: ObservableObject {
         // receive? The scheme's StoreKit configuration is pushed
         // to the simulator's storekitd by the test RUNNER (not
         // embedded in the app), so the app cannot inspect it
-        // directly — but the runner-injected environment and,
-        // decisively, the products served (see loadProducts) show
-        // whether a local session is active for this launch.
+        // directly. What the app CAN record is the runner-injected
+        // environment (below) and what it was served (see
+        // loadProducts) — observations to correlate with the
+        // runner-side evidence, not proof of the session's source.
         let environment = ProcessInfo.processInfo.environment
         let injected = environment.keys
             .filter { $0.localizedCaseInsensitiveContains("storekit") || $0.localizedCaseInsensitiveContains("xctest") }
@@ -131,13 +132,15 @@ final class StoreManager: ObservableObject {
                 }
             }
             introOfferEligible = eligibility
-            // PROVENANCE: a free-trial introductory offer can only
-            // come from the LOCAL PetCare360.storekit in this
-            // build — the App Store Connect products carry no
-            // introductory offers (none have been created there).
-            // A "free/P7D" line below therefore proves the local
-            // StoreKit configuration served this launch's
-            // products; its absence proves the opposite.
+            // OBSERVED CATALOGUE: these lines record what StoreKit
+            // actually served this launch — product IDs, prices,
+            // introductory offers, eligibility — for correlation
+            // with the workflow's runner-side storekitd evidence.
+            // They do NOT prove where the products came from:
+            // the local PetCare360.storekit and App Store Connect
+            // both configure the same products with the same
+            // 7-day free-trial offers, so an observed freeTrial/P7D
+            // offer is consistent with either source.
             for product in products {
                 let offer = product.subscription?.introductoryOffer
                 let offerText = offer.map { "\($0.paymentMode == .freeTrial ? "freeTrial" : "other")/value:\($0.period.value)/unit:\(String(describing: $0.period.unit))" } ?? "none"

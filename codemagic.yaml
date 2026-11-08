@@ -399,7 +399,7 @@ workflows:
           # HIGHEST available iOS runtime, and print the choice —
           # the previous "first candidate" pick was arbitrary.
           UDID=$(xcrun simctl list devices available -j | python3 -c "
-          import json, re, sys
+          import json, os, re, sys
           data = json.load(sys.stdin)
           def version(runtime):
               m = re.search(r'iOS[- ](\d+)[-.](\d+)', runtime)
@@ -412,16 +412,38 @@ workflows:
                   if dev.get('isAvailable') and 'iPhone' in dev.get('name', ''):
                       candidates.append((version(runtime), runtime, dev))
           candidates.sort(key=lambda c: c[0], reverse=True)
+          # EXPLICIT RUNTIME REPORT: preferring the highest runtime
+          # does NOT guarantee any particular version is installed.
+          # Record every candidate, the selection, and whether
+          # iOS 27+ exists on this image at all — in the artifact
+          # file AND on stderr (the step log).
+          lines = ['Available iPhone simulators (highest runtime first):']
+          for ver, runtime, dev in candidates:
+              lines.append('  - %s on %s (iOS %d.%d)' % (dev.get('name', ''), runtime, ver[0], ver[1]))
+          ios27 = any(ver >= (27, 0) for ver, _, _ in candidates)
+          lines.append('iOS 27 or later available on this image: %s' % ('YES' if ios27 else 'NO'))
           if candidates:
               ver, runtime, dev = candidates[0]
               print(dev['udid'])
-              sys.stderr.write('Selected simulator: %s on %s (iOS %d.%d), UDID %s\n' % (dev.get('name', ''), runtime, ver[0], ver[1], dev['udid']))
+              lines.append('SELECTED: %s on %s (iOS %d.%d), UDID %s' % (dev.get('name', ''), runtime, ver[0], ver[1], dev['udid']))
+              if not ios27:
+                  lines.append('NOTE: no iOS 27+ simulator exists on this image, so this run uses iOS %d.%d — the runtime range in which command-line test runs are reported to leave storekitd without a working pushed StoreKit configuration session.' % (ver[0], ver[1]))
+          else:
+              lines.append('SELECTED: none (no available iPhone simulator)')
+          report = '\n'.join(lines) + '\n'
+          sys.stderr.write(report)
+          try:
+              with open(os.path.join(os.environ.get('TEST_DIR', '.'), '00-simulator-selection.log'), 'w') as fh:
+                  fh.write(report)
+          except Exception as exc:
+              sys.stderr.write('could not write simulator selection log: %s\n' % exc)
           ")
           if [ -z "$UDID" ]; then
             echo 'ERROR: no available iPhone simulator on this image' | tee "$TEST_DIR/00-toolchain.log"
             exit 1
           fi
           echo "SIM_UDID=$UDID" >> "$CM_ENV"
+          cat "$TEST_DIR/00-simulator-selection.log" 2>/dev/null || true
           xcrun simctl boot "$UDID" || true
       - name: Build for testing (simulator, ad-hoc signed, testability ON)
         script: |
@@ -432,8 +454,8 @@ workflows:
           # UNSIGNED app, and Product.purchase() fell through to
           # the real App Store, which demanded an Apple Account
           # sign-in (run 6aef9529). Signing fixed that fall-through
-          # (products now load from the local configuration with
-          # its trial offers), but purchase() then SUSPENDED with
+          # (products load, with their 7-day trial offers), but
+          # purchase() then SUSPENDED with
           # no sheet at all (run 6af01f68) — the remaining variable
           # is whether the runner actually pushes the scheme's
           # StoreKit configuration into the simulator's storekitd,
