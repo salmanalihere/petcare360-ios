@@ -561,20 +561,48 @@ workflows:
           done
           if [ "$FAILED" -ne 0 ]; then
             echo "One or more UI tests failed — see $TEST_DIR/ui/*.log"
-            # EVIDENCE CAPTURE (best effort, never fatal): the
-            # app's StoreKit lifecycle log (subsystem = bundle ID,
-            # category StoreKit) plus storekitd's own lines, from
-            # the simulator's unified log — this is what shows
-            # whether Product.purchase() was called, suspended, or
-            # answered, and whether storekitd ever got a session.
+            # EVIDENCE CAPTURE (best effort, never fatal) — FIXED
+            # after run 6af02598, whose capture lost the evidence
+            # it existed to keep: the old single predicate matched
+            # EVERY storekitd subsystem (401 of 409 lines were the
+            # daemon's push-connection spam) and `tail -400` then
+            # kept only the final ~40 seconds, discarding
+            # purchase.begin and the first heartbeat; and the old
+            # container probe ran `ls` INSIDE the simulator via
+            # simctl spawn, which errored at the simctl level
+            # (iOS ships no such probe binary) and listed nothing.
+            # Now: (1) the app's own log is captured SEPARATELY
+            # and UNCUT (it is sparse — a handful of lifecycle
+            # lines per launch, so nothing needs trimming);
+            # (2) storekitd is filtered to its StoreKit
+            # subsystems only, excluding the push-connection
+            # noise, with a generous cap; (3) the container probe
+            # runs on the HOST against the simulator's data
+            # directory, where a directory listing can actually
+            # be produced, and reports present-or-absent
+            # explicitly for each probed path.
             {
-              echo "=== App + storekitd log (last 30m) ==="
+              echo "=== App log (subsystem com.xenon-media.petcare360, last 30m, UNCUT) ==="
               xcrun simctl spawn "$SIM_UDID" log show --last 30m --style compact \
-                --predicate 'subsystem == "com.xenon-media.petcare360" OR process == "storekitd" OR subsystem BEGINSWITH "com.apple.storekit"' 2>&1 | tail -400
+                --predicate 'subsystem == "com.xenon-media.petcare360"' 2>&1
               echo
-              echo "=== storekitd container probe ==="
-              xcrun simctl spawn "$SIM_UDID" ls -la /tmp/com.apple.storekit 2>&1 || true
-              xcrun simctl spawn "$SIM_UDID" ls -la /private/var/tmp/com.apple.storekit 2>&1 || true
+              echo "=== storekitd log (StoreKit subsystems only, last 30m) ==="
+              xcrun simctl spawn "$SIM_UDID" log show --last 30m --style compact \
+                --predicate 'process == "storekitd" AND subsystem BEGINSWITH "com.apple.storekit"' 2>&1 | tail -2000
+              echo
+              echo "=== storekitd container probe (host-side) ==="
+              DEV_DATA="$HOME/Library/Developer/CoreSimulator/Devices/$SIM_UDID/data"
+              echo "Simulator data directory: $DEV_DATA"
+              for PROBE in "$DEV_DATA/tmp/com.apple.storekit" "$DEV_DATA/Library/com.apple.storekit" "$DEV_DATA/private/var/tmp/com.apple.storekit"; do
+                if [ -e "$PROBE" ]; then
+                  echo "PROBE PRESENT: $PROBE"
+                  ls -la "$PROBE" 2>&1
+                else
+                  echo "PROBE ABSENT: $PROBE (no such path on the host)"
+                fi
+              done
+              echo "StoreKit-named paths under the device data directory (maxdepth 5):"
+              find "$DEV_DATA" -maxdepth 5 -iname "*storekit*" -print 2>/dev/null || true
             } 2>&1 | tee "$TEST_DIR/ui/storekit-evidence.log" || true
             exit 1
           fi
@@ -592,3 +620,173 @@ workflows:
       - build/full-tests/*.xcresult
       - build/full-tests/ui/*.log
       - build/full-tests/ui/*.xcresult
+
+  petcare360-storekit-diagnostics:
+    name: PetCare 360 · StoreKit Diagnostics (isolated)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: "PetCare360.xcodeproj"
+        XCODE_SCHEME: "PetCare360"
+        TEST_DIR: "build/storekit-diag"
+        DIAG_DIR: "build/storekit-diag"
+        DERIVED_DATA: "build/storekit-diag/DerivedData"
+    scripts:
+      - name: Toolchain + simulator inventory
+        script: |
+          mkdir -p "$DIAG_DIR"
+          {
+            xcodebuild -version
+            echo
+            xcrun simctl list devices available
+          } 2>&1 | tee "$DIAG_DIR/00-toolchain.log"
+      - name: Select an available iPhone simulator (highest runtime, explicit report)
+        script: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, os, re, sys
+          data = json.load(sys.stdin)
+          def version(runtime):
+              m = re.search(r'iOS[- ](\d+)[-.](\d+)', runtime)
+              return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+          candidates = []
+          for runtime, devs in data['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for dev in devs:
+                  if dev.get('isAvailable') and 'iPhone' in dev.get('name', ''):
+                      candidates.append((version(runtime), runtime, dev))
+          candidates.sort(key=lambda c: c[0], reverse=True)
+          lines = ['Available iPhone simulators (highest runtime first):']
+          for ver, runtime, dev in candidates:
+              lines.append('  - %s on %s (iOS %d.%d)' % (dev.get('name', ''), runtime, ver[0], ver[1]))
+          ios27 = any(ver >= (27, 0) for ver, _, _ in candidates)
+          lines.append('iOS 27 or later available on this image: %s' % ('YES' if ios27 else 'NO'))
+          if candidates:
+              ver, runtime, dev = candidates[0]
+              print(dev['udid'])
+              lines.append('SELECTED: %s on %s (iOS %d.%d), UDID %s' % (dev.get('name', ''), runtime, ver[0], ver[1], dev['udid']))
+          report = '\n'.join(lines) + '\n'
+          sys.stderr.write(report)
+          try:
+              with open(os.path.join(os.environ.get('TEST_DIR', '.'), '00-simulator-selection.log'), 'w') as fh:
+                  fh.write(report)
+          except Exception:
+              pass
+          ")
+          if [ -z "$UDID" ]; then
+            echo 'ERROR: no available iPhone simulator on this image'
+            exit 1
+          fi
+          echo "SIM_UDID=$UDID" >> "$CM_ENV"
+          cat "$DIAG_DIR/00-simulator-selection.log" 2>/dev/null || true
+          xcrun simctl boot "$UDID" || true
+      - name: Build for testing (SPLIT pipeline — the configuration under comparison)
+        script: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY="-" \
+            ENABLE_TESTABILITY=YES \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            2>&1 | tee "$DIAG_DIR/01-build-for-testing.log"
+      - name: Capture the SPLIT .xctestrun (from build-for-testing)
+        script: |
+          mkdir -p "$DIAG_DIR/split"
+          find "$DERIVED_DATA/Build/Products" -name "*.xctestrun" | while read -r f; do
+            base=$(basename "$f")
+            cp -R "$f" "$DIAG_DIR/split/$base"
+            plutil -p "$f" > "$DIAG_DIR/split/$base.plist.txt" 2>&1 || true
+          done
+          KEYS=$(grep -ci "storekit" "$DIAG_DIR"/split/*.plist.txt 2>/dev/null | awk -F: '{n+=$NF} END {print n+0}')
+          echo "SPLIT (build-for-testing): StoreKit key lines across .xctestrun dumps: $KEYS" | tee "$DIAG_DIR/split-verdict.log"
+          true
+      - name: Run the SKTestSession diagnostic via a SINGLE xcodebuild test invocation
+        script: |
+          # ONE invocation that builds AND tests — the contrast
+          # with the split pipeline. It runs ONLY the isolated
+          # diagnostic (PetCare360StoreKitDiagnosticsTests), which
+          # creates an SKTestSession from the PetCare360.storekit
+          # bundled in the unit-test target, loads both products,
+          # buys the monthly plan programmatically (dialogs
+          # disabled — no sheet), and asserts a verified current
+          # entitlement. Its SKDIAG lines are the verdict trail.
+          xcrun simctl uninstall "$SIM_UDID" com.xenon-media.petcare360 >/dev/null 2>&1 || true
+          set -o pipefail
+          xcodebuild test \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath "$DIAG_DIR/SingleRun.xcresult" \
+            -only-testing:PetCare360Tests/PetCare360StoreKitDiagnosticsTests \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY="-" \
+            ENABLE_TESTABILITY=YES \
+            ONLY_ACTIVE_ARCH=YES \
+            ARCHS=arm64 \
+            2>&1 | tee "$DIAG_DIR/02-single-test.log" || echo "xcodebuild test exited non-zero — the summary step reports the verdict"
+          true
+      - name: Capture the SINGLE-invocation .xctestrun (regenerated by xcodebuild test)
+        script: |
+          mkdir -p "$DIAG_DIR/single"
+          find "$DERIVED_DATA/Build/Products" -name "*.xctestrun" | while read -r f; do
+            base=$(basename "$f")
+            cp -R "$f" "$DIAG_DIR/single/$base"
+            plutil -p "$f" > "$DIAG_DIR/single/$base.plist.txt" 2>&1 || true
+          done
+          KEYS=$(grep -ci "storekit" "$DIAG_DIR"/single/*.plist.txt 2>/dev/null | awk -F: '{n+=$NF} END {print n+0}')
+          echo "SINGLE (xcodebuild test): StoreKit key lines across .xctestrun dumps: $KEYS" | tee "$DIAG_DIR/single-verdict.log"
+          true
+      - name: StoreKit evidence (app log uncut + filtered storekitd + host-side probe)
+        script: |
+          {
+            echo "=== App log (subsystem com.xenon-media.petcare360, last 30m, UNCUT) ==="
+            xcrun simctl spawn "$SIM_UDID" log show --last 30m --style compact \
+              --predicate 'subsystem == "com.xenon-media.petcare360"' 2>&1
+            echo
+            echo "=== storekitd log (StoreKit subsystems only, last 30m) ==="
+            xcrun simctl spawn "$SIM_UDID" log show --last 30m --style compact \
+              --predicate 'process == "storekitd" AND subsystem BEGINSWITH "com.apple.storekit"' 2>&1 | tail -2000
+            echo
+            echo "=== storekitd container probe (host-side) ==="
+            DEV_DATA="$HOME/Library/Developer/CoreSimulator/Devices/$SIM_UDID/data"
+            echo "Simulator data directory: $DEV_DATA"
+            for PROBE in "$DEV_DATA/tmp/com.apple.storekit" "$DEV_DATA/Library/com.apple.storekit" "$DEV_DATA/private/var/tmp/com.apple.storekit"; do
+              if [ -e "$PROBE" ]; then
+                echo "PROBE PRESENT: $PROBE"
+                ls -la "$PROBE" 2>&1
+              else
+                echo "PROBE ABSENT: $PROBE (no such path on the host)"
+              fi
+            done
+            echo "StoreKit-named paths under the device data directory (maxdepth 5):"
+            find "$DEV_DATA" -maxdepth 5 -iname "*storekit*" -print 2>/dev/null || true
+          } 2>&1 | tee "$DIAG_DIR/03-storekit-evidence.log"
+          true
+      - name: Comparison + verdict summary
+        script: |
+          {
+            echo '================ STOREKIT DIAGNOSTIC SUMMARY ================'
+            cat "$DIAG_DIR/split-verdict.log" 2>/dev/null || echo 'SPLIT verdict missing'
+            cat "$DIAG_DIR/single-verdict.log" 2>/dev/null || echo 'SINGLE verdict missing'
+            echo
+            echo '--- SKDIAG lines from the single-invocation run ---'
+            grep -E "SKDIAG" "$DIAG_DIR/02-single-test.log" 2>/dev/null || echo '(no SKDIAG lines — the diagnostic did not run; see 02-single-test.log)'
+            echo
+            grep -E "Test Case .* (passed|failed)" "$DIAG_DIR/02-single-test.log" 2>/dev/null || true
+          } | tee "$DIAG_DIR/99-summary.log"
+          if grep -q "SKDIAG VERDICT: local StoreKit purchase COMPLETES" "$DIAG_DIR/02-single-test.log"; then
+            echo 'DIAGNOSTIC RESULT: a local StoreKit purchase COMPLETES in this environment'
+          else
+            echo 'DIAGNOSTIC RESULT: a local StoreKit purchase does NOT complete in this environment — see the SKDIAG failure line for the exact step and error'
+            exit 1
+          fi
+    artifacts:
+      - build/storekit-diag/*.log
+      - build/storekit-diag/*.xcresult
+      - build/storekit-diag/**/*.plist.txt
