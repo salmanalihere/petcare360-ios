@@ -122,17 +122,23 @@ final class PetCare360RecoveryTests: XCTestCase {
             url: dir.appendingPathComponent("localonly.store"),
             cloudKitDatabase: .none)
 
-        // Open + save, then FULLY release before reopening.
-        var first: ModelContainer? = try PetCare360App.makeContainer(configuration: config)
-        let ctx1 = ModelContext(first!)
-        let household = Household()
-        let member = HouseholdMember(displayName: "Regression", role: .owner)
-        member.household = household
-        ctx1.insert(household)
-        ctx1.insert(member)
-        ctx1.insert(Pet(name: "LocalOnly", species: .cat))
-        try ctx1.save()
-        first = nil
+        // Open + save inside a dedicated scope: the first
+        // container, its ModelContext, and the inserted objects
+        // are all created and released inside it, so the store
+        // is genuinely closed before the reopen below. (Merely
+        // setting a container variable to nil would NOT release
+        // it while a ModelContext still references it.)
+        do {
+            let first = try PetCare360App.makeContainer(configuration: config)
+            let ctx1 = ModelContext(first)
+            let household = Household()
+            let member = HouseholdMember(displayName: "Regression", role: .owner)
+            member.household = household
+            ctx1.insert(household)
+            ctx1.insert(member)
+            ctx1.insert(Pet(name: "LocalOnly", species: .cat))
+            try ctx1.save()
+        }
 
         // Reopen: records AND the relationship must survive.
         let second = try PetCare360App.makeContainer(configuration: config)
