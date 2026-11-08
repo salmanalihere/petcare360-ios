@@ -1,6 +1,7 @@
 import Foundation
 import StoreKit
 import Combine
+import os
 
 /// StoreKit 2 subscription manager — Apple-entitlement ONLY.
 ///
@@ -44,6 +45,39 @@ final class StoreManager: ObservableObject {
 
     private var updatesTask: Task<Void, Never>? = nil
 
+    /// Unified log for the StoreKit lifecycle (Console subsystem
+    /// "StoreKit", and the Codemagic full-tests workflow extracts
+    /// it from the simulator log after a failed UI run). The
+    /// purchase path logs its BEGIN, periodic STILL-SUSPENDED
+    /// heartbeats while `Product.purchase()` is awaited, and
+    /// exactly one terminal line (result / error) — so a hung
+    /// purchase is distinguishable from a returned one in the log
+    /// alone. Logging only: it never affects access decisions.
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "PetCare360",
+                                    category: "StoreKit")
+
+    /// True while a `Product.purchase()` call is in flight. A
+    /// second purchase started concurrently would stack StoreKit
+    /// presentations, so `purchase` refuses to overlap; the flag
+    /// is also the heartbeat's suspension signal. If StoreKit
+    /// never returns, this stays true and the purchasing UI stays
+    /// disabled — deliberate: there is no safe local recovery
+    /// from a suspended system purchase (cancelling the awaiting
+    /// Task does not cancel StoreKit's presentation), and
+    /// re-enabling the button would invite a second, stacked
+    /// purchase. Access is never affected by this flag.
+    @Published private(set) var purchaseInFlight = false
+
+    private var accessDescription: String {
+        switch accessState {
+        case .unknown: return "unknown"
+        case .active(let productID, _, let isTrial, _, let inGrace):
+            return "active(product: \(productID), trial: \(isTrial), grace: \(inGrace))"
+        case .inactive(let billingIssue):
+            return "inactive(billingIssue: \(billingIssue))"
+        }
+    }
+
     /// True only while a verified entitlement is active (paid,
     /// free-trial, grace-period, or cancelled-but-unexpired).
     var isPremium: Bool { accessState.hasAccess }
@@ -53,6 +87,18 @@ final class StoreManager: ObservableObject {
     var hasPremiumAccess: Bool { EntitlementPolicy.hasAccess(isPremium: isPremium) }
 
     init() {
+        // Which test-environment signals did this process actually
+        // receive? The scheme's StoreKit configuration is pushed
+        // to the simulator's storekitd by the test RUNNER (not
+        // embedded in the app), so the app cannot inspect it
+        // directly — but the runner-injected environment and,
+        // decisively, the products served (see loadProducts) show
+        // whether a local session is active for this launch.
+        let environment = ProcessInfo.processInfo.environment
+        let injected = environment.keys
+            .filter { $0.localizedCaseInsensitiveContains("storekit") || $0.localizedCaseInsensitiveContains("xctest") }
+            .sorted()
+        Self.log.info("StoreManager init. Runner-injected environment keys: \(injected.joined(separator: ","), privacy: .public)")
         updatesTask = listenForTransactions()
         Task { await loadProducts(); await refreshEntitlements() }
     }
@@ -85,6 +131,18 @@ final class StoreManager: ObservableObject {
                 }
             }
             introOfferEligible = eligibility
+            // PROVENANCE: a free-trial introductory offer can only
+            // come from the LOCAL PetCare360.storekit in this
+            // build — the App Store Connect products carry no
+            // introductory offers (none have been created there).
+            // A "free/P7D" line below therefore proves the local
+            // StoreKit configuration served this launch's
+            // products; its absence proves the opposite.
+            for product in products {
+                let offer = product.subscription?.introductoryOffer
+                let offerText = offer.map { "\($0.paymentMode == .freeTrial ? "freeTrial" : "other")/value:\($0.period.value)/unit:\(String(describing: $0.period.unit))" } ?? "none"
+                Self.log.info("Product loaded: \(product.id, privacy: .public) price \(product.displayPrice, privacy: .public) introOffer \(offerText, privacy: .public) eligible \(eligibility[product.id] ?? false)")
+            }
         } catch {
             loadError = "Subscription plans could not be loaded. Please check your connection and try again."
         }
@@ -107,23 +165,53 @@ final class StoreManager: ObservableObject {
     func purchase(_ product: Product) async -> Bool {
         purchaseError = nil
         infoMessage = nil
+        // Never stack purchases: a second call while StoreKit is
+        // still presenting would queue behind (or corrupt) the
+        // first. The attempt is refused and logged; the in-flight
+        // purchase continues to its own outcome.
+        guard !purchaseInFlight else {
+            Self.log.error("purchase.begin REFUSED: another purchase is already in flight")
+            return false
+        }
+        purchaseInFlight = true
+        defer { purchaseInFlight = false }
+        Self.log.info("purchase.begin product \(product.id, privacy: .public) price \(product.displayPrice, privacy: .public) — awaiting Product.purchase() (system confirmation sheet should present now)")
+        // Suspension heartbeat: logs at +10s and +20s ONLY if the
+        // await has not returned, so the run log distinguishes
+        // "StoreKit never answered" from any returned result.
+        // The watchdog never touches state — see purchaseInFlight.
+        let heartbeat = Task {
+            for elapsed in [10, 20] {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                if Task.isCancelled { return }
+                Self.log.error("purchase.stillSuspended product \(product.id, privacy: .public) elapsed \(elapsed)s — Product.purchase() has NOT returned; no result, no error (the confirmation sheet was never presented or never answered)")
+            }
+        }
+        defer { heartbeat.cancel() }
         do {
             let result = try await product.purchase()
             switch result {
             case .success(let verification):
+                Self.log.info("purchase.result success — verifying transaction")
                 let transaction = try checkVerified(verification)
+                Self.log.info("purchase.verified transaction \(transaction.id) product \(transaction.productID, privacy: .public) — refreshing entitlements")
                 await refreshEntitlements()
                 await transaction.finish()
+                Self.log.info("purchase.finished — access now \(self.accessDescription, privacy: .public)")
                 return isPremium
             case .userCancelled:
+                Self.log.info("purchase.result userCancelled")
                 return false
             case .pending:
+                Self.log.info("purchase.result pending (approval outstanding)")
                 infoMessage = "Your purchase is pending approval. Access unlocks automatically once it is approved."
                 return false
             @unknown default:
+                Self.log.error("purchase.result unknown-default")
                 return false
             }
         } catch {
+            Self.log.error("purchase.error \(error.localizedDescription, privacy: .public)")
             purchaseError = "Purchase did not complete. You have not been charged."
             return false
         }
@@ -177,6 +265,7 @@ final class StoreManager: ObservableObject {
             return snapshot.productID
         }).intersection(Set(PremiumProduct.all))
         accessState = SubscriptionAccessPolicy.resolve(snapshots: snapshots, now: Date())
+        Self.log.info("entitlements.refreshed snapshots \(snapshots.count) purchasedIDs \(self.purchasedProductIDs.sorted().joined(separator: ","), privacy: .public) access \(self.accessDescription, privacy: .public)")
     }
 
     private func snapshot(for transaction: Transaction,

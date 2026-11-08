@@ -388,34 +388,60 @@ workflows:
           } 2>&1 | tee "$TEST_DIR/00-toolchain.log"
       - name: Select an available iPhone simulator
         script: |
+          # RUNTIME CHOICE IS LOAD-BEARING FOR STOREKIT: on the
+          # iOS 26.x simulator runtime, command-line test runs are
+          # reported (and were observed in this project's runs) to
+          # leave the simulator's storekitd without a working
+          # pushed StoreKit configuration session — products may
+          # load, but Product.purchase() suspends with no
+          # confirmation sheet and no error. The same suites pass
+          # on the iOS 27 runtime. So: pick an iPhone on the
+          # HIGHEST available iOS runtime, and print the choice —
+          # the previous "first candidate" pick was arbitrary.
           UDID=$(xcrun simctl list devices available -j | python3 -c "
-          import json, sys
+          import json, re, sys
           data = json.load(sys.stdin)
-          candidates = [dev for runtime, devs in data['devices'].items()
-                        if 'iOS' in runtime
-                        for dev in devs
-                        if dev.get('isAvailable') and 'iPhone' in dev.get('name', '')]
-          print(candidates[0]['udid'] if candidates else '')")
+          def version(runtime):
+              m = re.search(r'iOS[- ](\d+)[-.](\d+)', runtime)
+              return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+          candidates = []
+          for runtime, devs in data['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for dev in devs:
+                  if dev.get('isAvailable') and 'iPhone' in dev.get('name', ''):
+                      candidates.append((version(runtime), runtime, dev))
+          candidates.sort(key=lambda c: c[0], reverse=True)
+          if candidates:
+              ver, runtime, dev = candidates[0]
+              print(dev['udid'])
+              sys.stderr.write('Selected simulator: %s on %s (iOS %d.%d), UDID %s\n' % (dev.get('name', ''), runtime, ver[0], ver[1], dev['udid']))
+          ")
           if [ -z "$UDID" ]; then
             echo 'ERROR: no available iPhone simulator on this image' | tee "$TEST_DIR/00-toolchain.log"
             exit 1
           fi
           echo "SIM_UDID=$UDID" >> "$CM_ENV"
-          echo "Selected simulator UDID: $UDID"
           xcrun simctl boot "$UDID" || true
       - name: Build for testing (simulator, ad-hoc signed, testability ON)
         script: |
           # Ad-hoc signing (CODE_SIGN_IDENTITY="-", "sign to run
-          # locally") is REQUIRED for StoreKit testing: Xcode
-          # provisions the scheme's local StoreKit configuration
-          # into the StoreKit daemon bound to the app's signed
-          # identity. The previous CODE_SIGNING_ALLOWED=NO build
-          # produced an UNSIGNED app, which cannot hold that local
-          # test session — Product.products could still be served,
-          # but Product.purchase() fell through to the real App
-          # Store and the simulator demanded an Apple Account
-          # sign-in (run 6aef9529). No team or account is needed
-          # for ad-hoc simulator signing.
+          # locally") is REQUIRED for StoreKit testing: the local
+          # test session binds to the app's signed identity. The
+          # previous CODE_SIGNING_ALLOWED=NO build produced an
+          # UNSIGNED app, and Product.purchase() fell through to
+          # the real App Store, which demanded an Apple Account
+          # sign-in (run 6aef9529). Signing fixed that fall-through
+          # (products now load from the local configuration with
+          # its trial offers), but purchase() then SUSPENDED with
+          # no sheet at all (run 6af01f68) — the remaining variable
+          # is whether the runner actually pushes the scheme's
+          # StoreKit configuration into the simulator's storekitd,
+          # which is runtime-dependent (see the simulator
+          # selection step) and is now instrumented end-to-end:
+          # app-side lifecycle logs + the xctestrun dump + the
+          # post-failure storekitd evidence capture. No team or
+          # account is needed for ad-hoc simulator signing.
           set -o pipefail
           xcodebuild build-for-testing \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
@@ -450,6 +476,12 @@ workflows:
             echo "Built app: $APP_PATH"
             echo "Built app signature (must NOT be unsigned — StoreKit's local session binds to it):"
             codesign -dvv "$APP_PATH" 2>&1 | grep -E "Identifier=|Signature=|TeamIdentifier=" || echo "(codesign reported nothing — app may be unsigned)"
+            echo
+            echo "Generated .xctestrun files (what test-without-building actually runs from):"
+            find "$DERIVED_DATA" -name "*.xctestrun" -print 2>/dev/null | while read -r f; do
+              echo "--- $f"
+              plutil -p "$f" 2>/dev/null | grep -i -A2 -B2 "storekit" || echo "(no StoreKit keys in this xctestrun)"
+            done
           } 2>&1 | tee "$TEST_DIR/00-storekit-config.log"
           true
       - name: Run the COMPLETE unit test suite (UI tests run isolated below)
@@ -507,6 +539,21 @@ workflows:
           done
           if [ "$FAILED" -ne 0 ]; then
             echo "One or more UI tests failed — see $TEST_DIR/ui/*.log"
+            # EVIDENCE CAPTURE (best effort, never fatal): the
+            # app's StoreKit lifecycle log (subsystem = bundle ID,
+            # category StoreKit) plus storekitd's own lines, from
+            # the simulator's unified log — this is what shows
+            # whether Product.purchase() was called, suspended, or
+            # answered, and whether storekitd ever got a session.
+            {
+              echo "=== App + storekitd log (last 30m) ==="
+              xcrun simctl spawn "$SIM_UDID" log show --last 30m --style compact \
+                --predicate 'subsystem == "com.xenon-media.petcare360" OR process == "storekitd" OR subsystem BEGINSWITH "com.apple.storekit"' 2>&1 | tail -400
+              echo
+              echo "=== storekitd container probe ==="
+              xcrun simctl spawn "$SIM_UDID" ls -la /tmp/com.apple.storekit 2>&1 || true
+              xcrun simctl spawn "$SIM_UDID" ls -la /private/var/tmp/com.apple.storekit 2>&1 || true
+            } 2>&1 | tee "$TEST_DIR/ui/storekit-evidence.log" || true
             exit 1
           fi
       - name: Summary — executed counts from the real log
