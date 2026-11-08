@@ -403,18 +403,55 @@ workflows:
           echo "SIM_UDID=$UDID" >> "$CM_ENV"
           echo "Selected simulator UDID: $UDID"
           xcrun simctl boot "$UDID" || true
-      - name: Build for testing (simulator, no signing, testability ON)
+      - name: Build for testing (simulator, ad-hoc signed, testability ON)
         script: |
+          # Ad-hoc signing (CODE_SIGN_IDENTITY="-", "sign to run
+          # locally") is REQUIRED for StoreKit testing: Xcode
+          # provisions the scheme's local StoreKit configuration
+          # into the StoreKit daemon bound to the app's signed
+          # identity. The previous CODE_SIGNING_ALLOWED=NO build
+          # produced an UNSIGNED app, which cannot hold that local
+          # test session — Product.products could still be served,
+          # but Product.purchase() fell through to the real App
+          # Store and the simulator demanded an Apple Account
+          # sign-in (run 6aef9529). No team or account is needed
+          # for ad-hoc simulator signing.
           set -o pipefail
           xcodebuild build-for-testing \
             -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
             -derivedDataPath "$DERIVED_DATA" \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY="-" \
             ENABLE_TESTABILITY=YES \
             ONLY_ACTIVE_ARCH=YES \
             ARCHS=arm64 \
             2>&1 | tee "$TEST_DIR/01-build-for-testing.log"
+      - name: StoreKit configuration + built-app signature (diagnostics)
+        script: |
+          {
+            echo "Scheme StoreKit configuration references:"
+            grep -n "StoreKitConfigurationFileReference" "$XCODE_PROJECT/xcshareddata/xcschemes/$XCODE_SCHEME.xcscheme" || true
+            echo
+            echo "Local StoreKit configuration (PetCare360/PetCare360.storekit):"
+            python3 -c "
+          import json
+          cfg = json.load(open('PetCare360/PetCare360.storekit'))
+          for group in cfg.get('subscriptionGroups', []):
+              print('subscription group:', group.get('id'))
+              for sub in group.get('subscriptions', []):
+                  offer = sub.get('introductoryOffer') or {}
+                  print(' ', sub.get('productID'), 'price', sub.get('displayPrice'),
+                        'intro offer:', offer.get('paymentMode'), offer.get('subscriptionPeriod'),
+                        'x', offer.get('numberOfPeriods'))
+          "
+            echo
+            APP_PATH=$(find "$DERIVED_DATA/Build/Products" -type d -name "PetCare360.app" -print -quit 2>/dev/null)
+            echo "Built app: $APP_PATH"
+            echo "Built app signature (must NOT be unsigned — StoreKit's local session binds to it):"
+            codesign -dvv "$APP_PATH" 2>&1 | grep -E "Identifier=|Signature=|TeamIdentifier=" || echo "(codesign reported nothing — app may be unsigned)"
+          } 2>&1 | tee "$TEST_DIR/00-storekit-config.log"
+          true
       - name: Run the COMPLETE unit test suite (UI tests run isolated below)
         script: |
           set -o pipefail

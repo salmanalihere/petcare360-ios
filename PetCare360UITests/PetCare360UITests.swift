@@ -23,11 +23,21 @@ import XCTest
 /// (reachUnlockedTabBar): whichever screen is actually showing
 /// — onboarding, the subscription-checking spinner, the
 /// mandatory gate, or the tab bar — is driven on its own terms,
-/// with the visited screens named in any failure message.
+/// with the visited screens named in any failure message. The
+/// gate gets exactly ONE purchase attempt per test, monitored
+/// to a definite outcome; an Apple Account sign-in prompt (the
+/// purchase reaching the real App Store instead of the local
+/// StoreKit configuration) is an immediate, undismissed
+/// failure — see attemptGatePurchase.
 @MainActor
 final class PetCare360UITests: XCTestCase {
 
     private var app: XCUIApplication!
+    /// One purchase attempt per test, ever (see attemptGatePurchase):
+    /// re-tapping the gate's purchase button while a previous
+    /// attempt is unresolved stacks StoreKit calls and leaves the
+    /// button disabled behind a hung transaction.
+    private var gatePurchaseAttempted = false
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -97,7 +107,16 @@ final class PetCare360UITests: XCTestCase {
             case .onboarding:
                 stepOnboarding()
             case .subscriptionGate:
-                passSubscriptionGateIfNeeded()
+                if gatePurchaseAttempted {
+                    // The single attempt already ran; it records
+                    // its own failure if it did not unlock, so
+                    // being here means the entitlement is still
+                    // resolving. Wait — never tap purchase again.
+                    _ = petsTab.waitForExistence(timeout: 2)
+                } else {
+                    gatePurchaseAttempted = true
+                    attemptGatePurchase()
+                }
             case .storageError:
                 XCTFail("The app showed its storage-error screen during UI-test setup. Screens visited: \(visited.joined(separator: " → ")). Hierarchy: \(app.debugDescription)")
                 return
@@ -149,22 +168,26 @@ final class PetCare360UITests: XCTestCase {
         }
     }
 
-    /// Subscription-only model (2026-11-08): without an active
-    /// entitlement the app stops at the mandatory subscription
-    /// screen, not the tab bar. Pass it the honest way — through
-    /// the app's own gate UI and Apple's purchase confirmation,
+    /// THE subscription purchase of this test — exactly one
+    /// attempt, monitored to a definite outcome. Subscription-only
+    /// model (2026-11-08): without an active entitlement the app
+    /// stops at the mandatory gate; the test passes it honestly,
+    /// through the app's own gate UI and Apple's confirmation,
     /// against the scheme's local StoreKit configuration (the
     /// Monthly plan's 7-day free trial; nothing is charged).
-    /// In the Codemagic full-tests workflow every UI test runs
-    /// on a fresh install, so every test passes this gate itself;
-    /// when the suite is run as a group (e.g. locally in Xcode)
-    /// and an entitlement already exists, the tab bar is already
-    /// up and this returns immediately. If the gate cannot be
-    /// passed, reachUnlockedTabBar's final assertion fails the
-    /// test loudly — nothing here skips, stubs, or fakes an
-    /// entitlement, and no production behavior exists for the
-    /// tests' benefit.
-    private func passSubscriptionGateIfNeeded() {
+    ///
+    /// Failure discipline (learned from run 6aef9529, where the
+    /// purchase reached the REAL App Store): an Apple Account
+    /// sign-in prompt means the local StoreKit session is not
+    /// active for the app process — that is a hard, immediate
+    /// failure with diagnostics, never something to dismiss and
+    /// retry. The purchase button is never tapped twice: while
+    /// StoreManager.purchase is in flight the button is disabled,
+    /// and this method polls the attempt's outcome — tab bar
+    /// (entitlement verified by the app), confirmation sheet,
+    /// sign-in prompt, the app's own purchase error text, or the
+    /// button becoming enabled again without an unlock.
+    private func attemptGatePurchase() {
         if app.tabBars.buttons["Pets"].exists { return }
         // The gate's plan list can be in its failed/empty state
         // if the first product load raced the launch; its own
@@ -172,7 +195,10 @@ final class PetCare360UITests: XCTestCase {
         let retry = app.buttons["Retry"]
         if retry.exists { retry.tap() }
         let monthlyPlan = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Premium Monthly")).firstMatch
-        guard monthlyPlan.waitForExistence(timeout: 10) else { return }
+        guard monthlyPlan.waitForExistence(timeout: 10) else {
+            XCTFail("The subscription gate showed no purchasable plans within 10s. Visible gate texts: \(visibleGateTexts()). Hierarchy: \(app.debugDescription)")
+            return
+        }
         monthlyPlan.tap()
         // The call-to-action offers the free trial only when
         // Apple reports this environment eligible; otherwise it
@@ -181,47 +207,96 @@ final class PetCare360UITests: XCTestCase {
         let startPurchase = app.buttons.matching(
             NSPredicate(format: "label CONTAINS[c] %@ OR label BEGINSWITH[c] %@",
                         "Start 7-day free trial", "Subscribe,")).firstMatch
-        guard startPurchase.waitForExistence(timeout: 5) else { return }
+        guard startPurchase.waitForExistence(timeout: 5) else {
+            XCTFail("The subscription gate's purchase button never appeared after selecting Premium Monthly. Visible gate texts: \(visibleGateTexts()). Hierarchy: \(app.debugDescription)")
+            return
+        }
         startPurchase.tap()
-        confirmStoreKitPurchaseIfNeeded()
-    }
 
-    /// The local StoreKit environment presents Apple's purchase
-    /// confirmation as a sheet/alert (in the app, or via
-    /// SpringBoard depending on the Xcode version). Poll both,
-    /// bounded, and tap the confirmation — never "Cancel". The
-    /// exact wording varies by Xcode version, so the known
-    /// confirmations are accepted.
-    private func confirmStoreKitPurchaseIfNeeded() {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let confirmations = ["Subscribe", "Start Free Trial", "Confirm", "Buy"]
-        let deadline = Date().addingTimeInterval(15)
+        let deadline = Date().addingTimeInterval(30)
+        var sawPurchaseInFlight = false
+        var sheetConfirmed = false
         while Date() < deadline {
             if app.tabBars.buttons["Pets"].exists { return }
-            for host in [app!, springboard] {
-                for label in confirmations {
-                    if host.alerts.buttons[label].exists {
-                        host.alerts.buttons[label].tap()
-                        return
-                    }
-                    if host.sheets.buttons[label].exists {
-                        host.sheets.buttons[label].tap()
-                        return
-                    }
-                    // Some Xcode versions surface the sheet's
-                    // buttons directly in the host's button list.
-                    // These are EXACT label matches, so the gate's
-                    // own long-labelled purchase button (which
-                    // merely starts with "Subscribe,") can never
-                    // be mistaken for the sheet's confirmation.
-                    if host.buttons[label].exists {
-                        host.buttons[label].tap()
-                        return
-                    }
-                }
+            if appleAccountSignInPromptIsVisible() {
+                XCTFail("PURCHASE REACHED THE REAL APP STORE: iOS presented an Apple Account sign-in prompt after the purchase tap, and no local StoreKit confirmation sheet appeared. The local StoreKit configuration (PetCare360.storekit: com.petcare360.premium.monthly / com.petcare360.premium.yearly, group 22553779) is not active for the app process in this test environment — a local session never asks for an Apple Account. The prompt was NOT dismissed by the test. Visible gate texts: \(visibleGateTexts()). Hierarchy: \(app.debugDescription)")
+                return
+            }
+            if !sheetConfirmed {
+                sheetConfirmed = tapStoreKitConfirmationIfPresent()
+                if sheetConfirmed { continue }
+            }
+            if startPurchase.exists && !startPurchase.isEnabled {
+                sawPurchaseInFlight = true
+            } else if sawPurchaseInFlight && startPurchase.exists && startPurchase.isEnabled {
+                XCTFail("The purchase attempt finished WITHOUT unlocking the app (StoreManager.purchase returned — cancelled or failed — and the entitlement check still shows no active subscription). Visible gate texts, including any purchase error shown by the app: \(visibleGateTexts()). Hierarchy: \(app.debugDescription)")
+                return
             }
             Thread.sleep(forTimeInterval: 0.5)
         }
+        XCTFail("The purchase did not complete within 30s: the purchase button stayed disabled, i.e. StoreManager.purchase never returned, and no confirmation sheet or entitlement appeared. Visible gate texts: \(visibleGateTexts()). Hierarchy: \(app.debugDescription)")
+    }
+
+    /// True when iOS is showing the real-store Apple Account
+    /// sign-in prompt (a SpringBoard-hosted alert). Its presence
+    /// is diagnostic gold — the local StoreKit environment never
+    /// produces it — so it is only ever READ here, never tapped.
+    private func appleAccountSignInPromptIsVisible() -> Bool {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let inSpringboard = springboard.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Apple Account")).firstMatch
+        if inSpringboard.exists { return true }
+        let inApp = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Apple Account Sign In")).firstMatch
+        return inApp.exists
+    }
+
+    /// One poll for the LOCAL StoreKit confirmation sheet (the
+    /// one labelled as the Xcode test environment): if its
+    /// confirmation button is present — in the app's alerts or
+    /// sheets, in SpringBoard's, or as a direct button — tap it
+    /// and report true. "Cancel" is never tapped, and the Apple
+    /// Account prompt's buttons ("Cancel" / "Sign In") match
+    /// none of the confirmation labels.
+    private func tapStoreKitConfirmationIfPresent() -> Bool {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let confirmations = ["Subscribe", "Start Free Trial", "Confirm", "Buy"]
+        for host in [app!, springboard] {
+            for label in confirmations {
+                if host.alerts.buttons[label].exists {
+                    host.alerts.buttons[label].tap()
+                    return true
+                }
+                if host.sheets.buttons[label].exists {
+                    host.sheets.buttons[label].tap()
+                    return true
+                }
+                // Some Xcode versions surface the sheet's buttons
+                // directly in the host's button list. These are
+                // EXACT label matches, so the gate's own
+                // long-labelled purchase button (which merely
+                // starts with "Subscribe,") can never be mistaken
+                // for the sheet's confirmation.
+                if host.buttons[label].exists {
+                    host.buttons[label].tap()
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// The texts currently visible on the subscription gate —
+    /// including StoreManager's purchaseError / infoMessage,
+    /// which the gate renders as plain texts — for failure
+    /// messages, so a failed purchase reports the app's OWN
+    /// account of what happened, not just a timeout.
+    private func visibleGateTexts() -> String {
+        let labels = app.staticTexts.allElementsBoundByIndex
+            .map { $0.label }
+            .filter { !$0.isEmpty }
+            .prefix(14)
+        return labels.isEmpty ? "(none)" : labels.joined(separator: " | ")
     }
 
     /// SwiftUI Lists and Forms realize rows lazily: an element below
