@@ -7,6 +7,7 @@ struct ContentView: View {
     @Query private var allPets: [Pet]
     @Query private var allSchedules: [MedicationSchedule]
     @Query private var allPolicies: [InsurancePolicy]
+    @Query private var allTasks: [CareTask]
     @State private var didInitialReminderSync = false
     @StateObject private var store = StoreManager()
     @Environment(\.scenePhase) private var scenePhase
@@ -74,7 +75,7 @@ struct ContentView: View {
         // Centralized, serialized synchronization (v1.2.5): launch and
         // foreground passes can never interleave.
         NotificationService.shared.synchronizeReminders(
-            pets: allPets, schedules: allSchedules, policies: allPolicies,
+            pets: allPets, schedules: allSchedules, policies: allPolicies, tasks: allTasks,
             remindersEnabled: profiles.first?.remindersEnabled ?? true)
     }
 }

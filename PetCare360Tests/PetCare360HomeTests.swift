@@ -202,7 +202,7 @@ final class PetCare360HomeTests: XCTestCase {
     }
 
     func testReminderCategoryKeysAndPrefixes() {
-        XCTAssertEqual(Set(ReminderCategory.allCases.map { $0.defaultsKey }).count, 5)
+        XCTAssertEqual(Set(ReminderCategory.allCases.map { $0.defaultsKey }).count, 6)
         for category in ReminderCategory.allCases {
             XCTAssertFalse(category.pendingPrefixes.isEmpty)
         }
@@ -217,7 +217,7 @@ final class PetCare360HomeTests: XCTestCase {
         let alternates = AppIconOption.all.compactMap { $0.alternateName }
         XCTAssertEqual(Set(alternates).count, 7)
         XCTAssertEqual(Set(alternates), ["AppIconDog", "AppIconCat", "AppIconBird", "AppIconRabbit",
-                                         "AppIconReptile", "AppIconHorse", "AppIconOther"])
+                                         "AppIconTurtle", "AppIconHorse", "AppIconOther"])
         XCTAssertEqual(Set(AppIconOption.all.map { $0.previewImageName }).count, 8)
     }
 }

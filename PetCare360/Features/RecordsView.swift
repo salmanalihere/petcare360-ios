@@ -2,6 +2,8 @@ import SwiftUI
 import SwiftData
 import Charts
 import UIKit
+import PhotosUI
+import UniformTypeIdentifiers
 
 struct RecordsView: View {
     @Query(filter: #Predicate<Pet> { !$0.isArchived }) private var pets: [Pet]
@@ -360,7 +362,7 @@ struct VaccinationEditorView: View {
 struct DocumentsView: View {
     @EnvironmentObject private var store: StoreManager
     @Bindable var pet: Pet
-    @State private var showScanner = false
+    @State private var showAddDocument = false
     @State private var showPremiumAlert = false
     @State private var showPaywall = false
     var body: some View {
@@ -379,18 +381,105 @@ struct DocumentsView: View {
             }
             Section {
                 Button {
-                    if EntitlementPolicy.canUse(.documentScanning, isPremium: store.hasPremiumAccess) {
-                        showScanner = true
+                    if EntitlementPolicy.canUse(.documentStorage, isPremium: store.hasPremiumAccess) {
+                        showAddDocument = true
                     } else { showPremiumAlert = true }
-                } label: { Label("Scan a document", systemImage: "doc.viewfinder") }
-                Text("Scanning uses on-device Vision OCR. Extracted details are shown for your review and are never saved automatically.")
+                } label: { Label("Add a document", systemImage: "doc.badge.plus") }
+                Text("Add documents manually: choose a photo or a file, give it a title, and the original is preserved unchanged.")
                     .font(.caption).foregroundStyle(PCColor.secondaryText)
             }
         }
         .navigationTitle("Documents")
-        .sheet(isPresented: $showScanner) { DocumentScannerView(pet: pet) }
-        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .documentScanning) { showPaywall = true }
+        .sheet(isPresented: $showAddDocument) { AddDocumentView(pet: pet) }
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .documentStorage) { showPaywall = true }
         .sheet(isPresented: $showPaywall) { PaywallView() }
+    }
+}
+
+/// Manual document upload (2026-11-10): replaces the removed
+/// document scanner / OCR flow. The user picks a photo or a file,
+/// gives it a title and a category, and the ORIGINAL is stored
+/// unchanged — there is no camera capture and no text extraction.
+/// Documents stored by the old scanner, and their previously
+/// extracted text, are untouched and remain viewable in
+/// DocumentDetailView.
+struct AddDocumentView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    let pet: Pet
+
+    @State private var title = ""
+    @State private var category: MedicalCategory = .note
+    @State private var photoItem: PhotosPickerItem? = nil
+    @State private var documentData: Data? = nil
+    @State private var showFileImporter = false
+    @State private var saveError = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Document") {
+                    PhotosPicker(selection: $photoItem, matching: .images) {
+                        Label("Choose a photo", systemImage: "photo")
+                    }
+                    Button { showFileImporter = true } label: {
+                        Label("Choose a file", systemImage: "folder")
+                    }
+                    if let documentData, let image = UIImage(data: documentData) {
+                        Image(uiImage: image).resizable().scaledToFit().frame(height: 180)
+                    } else if documentData != nil {
+                        Label("File ready to save", systemImage: "doc.fill")
+                            .font(.caption).foregroundStyle(PCColor.secondaryText)
+                    }
+                }
+                Section("Details") {
+                    TextField("Document title", text: $title)
+                    Picker("Category", selection: $category) {
+                        ForEach(MedicalCategory.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                }
+                Text("The original file is preserved unchanged.")
+                    .font(.caption).foregroundStyle(PCColor.secondaryText)
+            }
+            .navigationTitle("Add Document")
+            .alert("Couldn't save", isPresented: Binding(get: { !saveError.isEmpty }, set: { if !$0 { saveError = "" } })) { Button("OK", role: .cancel) {} } message: { Text(saveError) }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { save() }.disabled(title.isEmpty || documentData == nil)
+                }
+            }
+            .onChange(of: photoItem) { _, newItem in
+                Task {
+                    if let data = try? await newItem?.loadTransferable(type: Data.self) {
+                        documentData = data
+                    }
+                }
+            }
+            .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image, .pdf, .data]) { result in
+                guard case .success(let url) = result else { return }
+                guard url.startAccessingSecurityScopedResource() else { return }
+                defer { url.stopAccessingSecurityScopedResource() }
+                if let data = try? Data(contentsOf: url) { documentData = data }
+            }
+        }
+    }
+
+    private func save() {
+        guard let documentData else { return }
+        let document = MedicalDocument(title: title)
+        document.categoryRaw = category.rawValue
+        document.originalData = documentData
+        // extractedText stays empty: no extraction exists any more.
+        // Text extracted by the old scanner on OTHER documents is
+        // stored data and is deliberately left untouched.
+        document.pet = pet
+        context.insert(document)
+        do { try context.save() } catch {
+            saveError = "Your changes could not be saved on this device. Nothing was closed — please try again."
+            return
+        }
+        dismiss()
     }
 }
 
@@ -465,8 +554,35 @@ struct AppointmentsView: View {
     @Bindable var pet: Pet
     @Query private var profiles: [UserProfile]
 
-    /// Status changes save immediately; the reminder is cancelled or
-    /// rescheduled to match, and a failure rolls back with an error.
+    /// The ONE sheet this screen presents (2026-11-10 fix). This
+    /// screen previously stacked three sheets on the same List —
+    /// add (isPresented), edit (item) and paywall (isPresented) —
+    /// plus a fourth sheet inside every row (PDFShareButton's own
+    /// share sheet). SwiftUI does not support that reliably: sibling
+    /// sheets on one view and sheets inside list rows can misroute,
+    /// and the item (editor) sheet dominates — which is why every
+    /// action appeared to open the appointment editor. Now every
+    /// presentation goes through this single enum-driven sheet, and
+    /// each button performs only its own action.
+    private enum AppointmentSheet: Identifiable {
+        case add
+        case edit(VetAppointment)
+        case paywall
+        case share(Data, String)
+
+        var id: String {
+            switch self {
+            case .add: return "add"
+            case .edit(let appt): return "edit-\(appt.id.uuidString)"
+            case .paywall: return "paywall"
+            case .share(_, let stamp): return "share-\(stamp)"
+            }
+        }
+    }
+
+    /// Status changes save immediately; BOTH reminders (one hour
+    /// and thirty minutes before) are cancelled or rescheduled to
+    /// match, and a failure rolls back with an error.
     private func setAppointmentStatus(_ appt: VetAppointment, completed: Bool = false, cancelled: Bool = false) {
         appt.isCompleted = completed
         appt.isCancelled = cancelled
@@ -477,23 +593,28 @@ struct AppointmentsView: View {
             statusError = "That change could not be saved on this device, so nothing was changed. Please try again."
             return
         }
-        NotificationService.shared.cancel(ids: ["appt-\(appt.id.uuidString)"])
+        NotificationService.shared.cancel(ids: NotificationService.appointmentReminderIDs(appointmentID: appt.id))
         // Global gate (audit fix, 2026-11-09): the appointment
         // editor checks remindersEnabled before scheduling; this
         // status path did not, so un-completing an appointment
         // re-added its reminder while global reminders were off.
         if (profiles.first?.remindersEnabled ?? true)
             && NotificationService.shouldScheduleAppointmentReminder(appt) {
-            NotificationService.shared.scheduleOneOff(
-                id: "appt-\(appt.id.uuidString)", title: "Vet appointment: \(pet.name)",
-                body: appt.title, fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
+            // Authorization approach matches the appointment
+            // editor (fix, 2026-11-10): schedule first, then make
+            // sure permission has been requested at least once.
+            // Previously a reopen scheduled directly, so a user
+            // who had never been prompted (e.g. skipped onboarding)
+            // got reminders iOS would silently never deliver.
+            NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                NotificationService.shared.scheduleAppointmentReminders(
+                    appt, petName: pet.name, species: pet.species)
+            }
         }
     }
     @State private var statusError = ""
-    @State private var showEditor = false
-    @State private var apptToEdit: VetAppointment? = nil
+    @State private var activeSheet: AppointmentSheet? = nil
     @State private var showPremiumAlert = false
-    @State private var showPaywall = false
     @EnvironmentObject private var store: StoreManager
     var body: some View {
         List {
@@ -511,33 +632,81 @@ struct AppointmentsView: View {
                     } else if appt.isCancelled {
                         Text("Cancelled").font(.caption.bold()).foregroundStyle(PCColor.errorRed)
                     }
-                    HStack(spacing: 16) {
+                    // Action row (2026-11-10): comfortable 44pt
+                    // tap targets with vertical padding and an
+                    // accessibility label per action (previously
+                    // caption-size text at 16pt spacing, well under
+                    // the 44pt minimum). Each button performs ONLY
+                    // its own action.
+                    HStack(spacing: 12) {
                         if store.hasPremiumAccess {
-                            PDFShareButton(title: "Visit Preparation PDF") {
-                                PDFService.visitPreparation(pet: pet, appointment: appt)
+                            Button {
+                                // Generate the PDF, then hand the
+                                // data UP to the screen's one sheet —
+                                // the button no longer owns a sheet.
+                                activeSheet = .share(
+                                    PDFService.visitPreparation(pet: pet, appointment: appt),
+                                    "\(appt.id.uuidString)-\(Date().timeIntervalSince1970)")
+                            } label: {
+                                Text("Visit Preparation PDF")
+                                    .padding(.vertical, 10).contentShape(Rectangle())
                             }
+                            .accessibilityLabel("Visit preparation PDF for \(appt.title)")
                         } else {
-                            Button("Visit Preparation PDF") { showPremiumAlert = true }
+                            Button { showPremiumAlert = true } label: {
+                                Text("Visit Preparation PDF")
+                                    .padding(.vertical, 10).contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Visit preparation PDF for \(appt.title), a Premium feature")
                         }
-                        Button("Edit") { apptToEdit = appt }
+                        Button { activeSheet = .edit(appt) } label: {
+                            Text("Edit")
+                                .padding(.vertical, 10).padding(.horizontal, 6).contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("Edit appointment \(appt.title)")
                         if !appt.isCompleted && !appt.isCancelled {
-                            Button("Complete") { setAppointmentStatus(appt, completed: true) }
-                            Button("Cancel", role: .destructive) { setAppointmentStatus(appt, cancelled: true) }
+                            Button { setAppointmentStatus(appt, completed: true) } label: {
+                                Text("Complete")
+                                    .padding(.vertical, 10).padding(.horizontal, 6).contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Mark appointment \(appt.title) complete")
+                            Button(role: .destructive) { setAppointmentStatus(appt, cancelled: true) } label: {
+                                Text("Cancel")
+                                    .padding(.vertical, 10).padding(.horizontal, 6).contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Cancel appointment \(appt.title)")
                         } else {
-                            Button("Reopen") { setAppointmentStatus(appt) }
+                            Button { setAppointmentStatus(appt) } label: {
+                                Text("Reopen")
+                                    .padding(.vertical, 10).padding(.horizontal, 6).contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("Reopen appointment \(appt.title)")
                         }
                     }
-                    .font(.caption)
+                    .font(.subheadline)
+                    .padding(.top, 2)
                 }
             }
         }
         .navigationTitle("Appointments")
         .alert("Couldn't save", isPresented: Binding(get: { !statusError.isEmpty }, set: { if !$0 { statusError = "" } })) { Button("OK", role: .cancel) {} } message: { Text(statusError) }
-        .toolbar { Button { showEditor = true } label: { Image(systemName: "plus") } }
-        .sheet(isPresented: $showEditor) { AppointmentEditorView(pet: pet) }
-        .sheet(item: $apptToEdit) { appt in AppointmentEditorView(pet: pet, existing: appt) }
-        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .premiumFeature) { showPaywall = true }
-        .sheet(isPresented: $showPaywall) { PaywallView() }
+        .toolbar {
+            Button { activeSheet = .add } label: { Image(systemName: "plus") }
+                .accessibilityLabel("Add appointment")
+        }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .add:
+                AppointmentEditorView(pet: pet)
+            case .edit(let appt):
+                AppointmentEditorView(pet: pet, existing: appt)
+            case .paywall:
+                PaywallView()
+            case .share(let data, _):
+                ShareSheet(items: [data])
+            }
+        }
+        .premiumUpgradePrompt(isPresented: $showPremiumAlert, prompt: .premiumFeature) { activeSheet = .paywall }
     }
 }
 
@@ -566,6 +735,21 @@ struct AppointmentEditorView: View {
                 TextField("Clinic", text: $clinic)
                 TextField("Veterinarian", text: $vet)
                 DatePicker("Date & time", selection: $date)
+                Section {
+                    Text("Reminders are scheduled 1 hour and 30 minutes before the appointment.")
+                        .font(.caption).foregroundStyle(PCColor.secondaryText)
+                    // A reminder whose time has already passed is
+                    // never dropped silently (2026-11-10): the
+                    // editor says so, and the still-valid reminder
+                    // is scheduled on save.
+                    if !isCompleted && !isCancelled,
+                       let notice = NotificationService.appointmentReminderNotice(appointmentDate: date) {
+                        Text(notice)
+                            .font(.caption).foregroundStyle(PCColor.errorRed)
+                    }
+                } header: {
+                    Text("Reminders")
+                }
                 TextField("Notes", text: $notes, axis: .vertical)
                 TextField("Questions to ask (one per line)", text: $questions, axis: .vertical)
                 if existing != nil {
@@ -604,7 +788,7 @@ struct AppointmentEditorView: View {
                         context.delete(existing)
                         do {
                             try context.save()
-                            NotificationService.shared.cancel(ids: ["appt-\(apptID.uuidString)"])
+                            NotificationService.shared.cancel(ids: NotificationService.appointmentReminderIDs(appointmentID: apptID))
                             dismiss()
                         } catch {
                             context.rollback()
@@ -630,13 +814,16 @@ struct AppointmentEditorView: View {
             saveError = "Your changes could not be saved on this device. Nothing was closed — please try again."
             return
         }
-        NotificationService.shared.cancel(ids: ["appt-\(appt.id.uuidString)"])
+        NotificationService.shared.cancel(ids: NotificationService.appointmentReminderIDs(appointmentID: appt.id))
         if (profiles.first?.remindersEnabled ?? true)
             && NotificationService.shouldScheduleAppointmentReminder(appt) {
             NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
-                NotificationService.shared.scheduleOneOff(
-                    id: "appt-\(appt.id.uuidString)", title: "Vet appointment: \(pet.name)",
-                    body: title, fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
+                // Both reminders — 1 hour and 30 minutes before;
+                // the service schedules whichever times have not
+                // already passed (the editor shows a notice for
+                // any that have).
+                NotificationService.shared.scheduleAppointmentReminders(
+                    appt, petName: pet.name, species: pet.species)
             }
         }
         dismiss()

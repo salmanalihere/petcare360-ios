@@ -133,7 +133,7 @@ final class PetCare360V124Tests: XCTestCase {
     func testPaywallOnlyAdvertisesDifferentiatedBenefits() {
         XCTAssertFalse(PremiumFeature.paywallFeatures.contains(.fullMedicationHistory))
         XCTAssertFalse(PremiumFeature.paywallFeatures.contains(.unlimitedRecords))
-        XCTAssertFalse(PremiumFeature.documentScanning.label.contains("AI"))
+        XCTAssertFalse(PremiumFeature.documentStorage.label.contains("AI"))
         XCTAssertFalse(PremiumFeature.recallNotifications.label.contains("notifications"))
     }
 }

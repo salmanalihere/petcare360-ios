@@ -51,7 +51,7 @@ enum PetSoundKind: String, CaseIterable {
 /// are read centrally by NotificationService, so editor saves and
 /// background rebuilds honour them identically.
 enum ReminderCategory: String, CaseIterable {
-    case medications, appointments, vaccinations, feeding, insurance
+    case medications, appointments, vaccinations, feeding, careTasks, insurance
 
     var defaultsKey: String { "pc-notif-\(rawValue)" }
     var label: String {
@@ -60,6 +60,7 @@ enum ReminderCategory: String, CaseIterable {
         case .appointments: return "Appointment reminders"
         case .vaccinations: return "Vaccination reminders"
         case .feeding: return "Feeding reminders"
+        case .careTasks: return "Care Task Reminders"
         case .insurance: return "Insurance renewal reminders"
         }
     }
@@ -69,14 +70,33 @@ enum ReminderCategory: String, CaseIterable {
     var pendingPrefixes: [String] {
         switch self {
         case .medications: return ["med-", "refill-"]
-        case .appointments: return ["appt-"]
+        case .appointments: return ["appt-", "appt30-"]
         case .vaccinations: return ["vax-"]
         case .feeding: return ["feed-"]
+        case .careTasks: return ["task-"]
         case .insurance: return ["ins-"]
         }
     }
     var isEnabled: Bool {
         UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    }
+}
+
+/// Repeat interval for care-task reminders (brief 2026-11-10): a
+/// task that is still incomplete re-reminds every interval until
+/// it is completed or deleted. Stored in UserDefaults under one
+/// shared key so the Settings picker (@AppStorage) and
+/// NotificationService read the same value. The default is
+/// 45 minutes; a stored value outside the offered choices falls
+/// back to the default rather than being honoured silently.
+enum TaskReminderPreferences {
+    static let intervalKey = "pc-task-reminder-interval-minutes"
+    static let intervalChoicesMinutes = [15, 30, 45, 60, 90, 120]
+    static let defaultIntervalMinutes = 45
+
+    static var intervalMinutes: Int {
+        let stored = UserDefaults.standard.integer(forKey: intervalKey)
+        return intervalChoicesMinutes.contains(stored) ? stored : defaultIntervalMinutes
     }
 }
 

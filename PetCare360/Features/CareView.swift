@@ -14,6 +14,28 @@ struct CareView: View {
 
     private var myName: String { profiles.first?.displayName ?? "Me" }
 
+    /// Keeps a task's reminder series in step with its completion
+    /// state (2026-11-10): completing a task cancels its pending
+    /// reminders immediately; marking it incomplete again re-arms
+    /// the series (when reminders are enabled).
+    private func updateTaskReminders(_ task: CareTask) {
+        if task.isCompleted {
+            NotificationService.shared.cancelTaskReminders(taskID: task.id)
+        } else if profiles.first?.remindersEnabled ?? true {
+            let pet = pets.first(where: { $0.id == task.petID })
+            // Same authorization approach as the task editor
+            // (review, 2026-11-10): schedule first, then make sure
+            // permission has been requested at least once —
+            // otherwise a user who skipped onboarding and only ever
+            // toggles tasks would never see the prompt and iOS
+            // would silently drop every reminder.
+            NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                NotificationService.shared.scheduleTaskReminder(
+                    task: task, petName: pet?.name ?? task.petName, species: pet?.species)
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -122,7 +144,10 @@ struct CareView: View {
                     task.isCompleted.toggle()
                     task.completedBy = task.isCompleted ? myName : ""
                     task.completedAt = task.isCompleted ? Date() : nil
-                    do { try context.save() } catch {
+                    do {
+                        try context.save()
+                        updateTaskReminders(task)
+                    } catch {
                         context.rollback()
                         notice = "That task update could not be saved on this device — please try again."
                     }
@@ -571,6 +596,7 @@ struct CareTaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query(filter: #Predicate<Pet> { !$0.isArchived }) private var pets: [Pet]
+    @Query private var profiles: [UserProfile]
     let existing: CareTask?
     init(existing: CareTask? = nil) { self.existing = existing }
     @State private var petID: UUID? = nil
@@ -624,8 +650,14 @@ struct CareTaskEditorView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
                     if let existing {
+                        let taskID = existing.id
                         context.delete(existing)
-                        do { try context.save(); dismiss() } catch {
+                        do {
+                            try context.save()
+                            // A deleted task's reminders stop at once.
+                            NotificationService.shared.cancelTaskReminders(taskID: taskID)
+                            dismiss()
+                        } catch {
                             context.rollback()
                             saveError = "This task could not be deleted. That could not be saved on this device, so nothing was changed. Please try again."
                         }
@@ -635,18 +667,38 @@ struct CareTaskEditorView: View {
         }
     }
     private func save() {
+        let savedTask: CareTask
+        let savedPet: Pet?
         if let existing {
             existing.title = title; existing.kindRaw = kind.rawValue
             existing.scheduledDate = date; existing.assignedTo = assignedTo
+            savedTask = existing
+            savedPet = pets.first(where: { $0.id == existing.petID })
         } else {
             guard let petID, let pet = pets.first(where: { $0.id == petID }) else { return }
             let task = CareTask(title: title, petID: pet.id, petName: pet.name, kind: kind, date: date)
             task.assignedTo = assignedTo
             context.insert(task)
+            savedTask = task
+            savedPet = pet
         }
         do { try context.save() } catch {
             saveError = "Your changes could not be saved on this device. Nothing was closed — please try again."
             return
+        }
+        // Reminder wiring (2026-11-10): an incomplete task (re)arms
+        // its reminder series — the service removes the old series
+        // and adds the fresh one inside a single queued operation,
+        // so edits never duplicate. A completed task's reminders
+        // are cancelled instead.
+        if savedTask.isCompleted {
+            NotificationService.shared.cancelTaskReminders(taskID: savedTask.id)
+        } else if profiles.first?.remindersEnabled ?? true {
+            NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                NotificationService.shared.scheduleTaskReminder(
+                    task: savedTask, petName: savedPet?.name ?? savedTask.petName,
+                    species: savedPet?.species)
+            }
         }
         dismiss()
     }

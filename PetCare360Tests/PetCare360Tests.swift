@@ -108,21 +108,6 @@ final class PetCare360Tests: XCTestCase {
         XCTAssertEqual(totals.first?.1, Decimal(7))
     }
 
-    // OCR parser heuristics
-    func testParserDetectsVaccinationAndAmount() {
-        let candidate = DocumentTextParser.parse("Happy Paws Clinic\nVaccination Certificate\nRabies Vaccination\nTotal $45.00", knownPetNames: ["Buddy"])
-        XCTAssertEqual(candidate.category, .vaccination)
-        XCTAssertFalse(candidate.vaccinationName.isEmpty)
-    }
-    func testParserExtractsCurrency() {
-        XCTAssertEqual(DocumentTextParser.firstCurrencyAmount(in: "Total due: $120.50 today"), Decimal(string: "120.50"))
-        XCTAssertNil(DocumentTextParser.firstCurrencyAmount(in: "No money here"))
-    }
-    func testParserFindsKnownPetName() {
-        let candidate = DocumentTextParser.parse("Patient: Buddy\nAnnual checkup", knownPetNames: ["Buddy", "Milo"])
-        XCTAssertEqual(candidate.petName, "Buddy")
-    }
-
     // Entitlements
     func testFreePlanPetLimit() {
         XCTAssertTrue(EntitlementPolicy.canAddPet(currentCount: 0, isPremium: false))

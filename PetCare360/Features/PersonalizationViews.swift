@@ -88,11 +88,14 @@ struct ReminderPreferencesView: View {
     @Query private var allPets: [Pet]
     @Query private var allSchedules: [MedicationSchedule]
     @Query private var allPolicies: [InsurancePolicy]
+    @Query private var allTasks: [CareTask]
     @AppStorage("pc-notif-medications") private var notifMedications = true
     @AppStorage("pc-notif-appointments") private var notifAppointments = true
     @AppStorage("pc-notif-vaccinations") private var notifVaccinations = true
     @AppStorage("pc-notif-feeding") private var notifFeeding = true
+    @AppStorage("pc-notif-careTasks") private var notifCareTasks = true
     @AppStorage("pc-notif-insurance") private var notifInsurance = true
+    @AppStorage(TaskReminderPreferences.intervalKey) private var taskIntervalMinutes = TaskReminderPreferences.defaultIntervalMinutes
     @State private var permissionDenied = false
 
     var body: some View {
@@ -106,12 +109,29 @@ struct ReminderPreferencesView: View {
                     .onChange(of: notifVaccinations) { _, on in categoryToggled(.vaccinations, on: on) }
                 Toggle("Feeding reminders", isOn: $notifFeeding)
                     .onChange(of: notifFeeding) { _, on in categoryToggled(.feeding, on: on) }
+                Toggle("Care Task Reminders", isOn: $notifCareTasks)
+                    .onChange(of: notifCareTasks) { _, on in categoryToggled(.careTasks, on: on) }
                 Toggle("Insurance renewal reminders", isOn: $notifInsurance)
                     .onChange(of: notifInsurance) { _, on in categoryToggled(.insurance, on: on) }
             } header: {
                 Text("Reminder types")
             } footer: {
                 Text("Reminders also need the main Reminders switch (Settings → Reminders) and iOS notification permission. A switch being on here never means iOS has granted permission.")
+            }
+            Section {
+                Picker("Repeat while incomplete every", selection: $taskIntervalMinutes) {
+                    ForEach(TaskReminderPreferences.intervalChoicesMinutes, id: \.self) { minutes in
+                        Text("\(minutes) minutes").tag(minutes)
+                    }
+                }
+                .onChange(of: taskIntervalMinutes) { _, _ in
+                    // Re-arm task series on the new interval grid.
+                    if notifCareTasks { categoryToggled(.careTasks, on: true) }
+                }
+            } header: {
+                Text("Care task repeats")
+            } footer: {
+                Text("A care task reminds you at its scheduled time and keeps repeating at this interval while it stays incomplete. Completing or deleting the task stops its reminders immediately.")
             }
             Section {
                 Button("Check notification permission") {
@@ -140,7 +160,7 @@ struct ReminderPreferencesView: View {
     private func categoryToggled(_ category: ReminderCategory, on: Bool) {
         if on {
             NotificationService.shared.synchronizeReminders(
-                pets: allPets, schedules: allSchedules, policies: allPolicies,
+                pets: allPets, schedules: allSchedules, policies: allPolicies, tasks: allTasks,
                 remindersEnabled: profiles.first?.remindersEnabled ?? false)
         } else {
             NotificationService.shared.cancelPending(withPrefixes: category.pendingPrefixes)

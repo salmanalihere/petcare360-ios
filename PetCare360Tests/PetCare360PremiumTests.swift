@@ -53,7 +53,7 @@ final class PetCare360PremiumTests: XCTestCase {
     // MARK: Prompt copy — every gate explains and offers the upgrade
 
     func testPremiumPromptsAreComplete() {
-        for prompt in [PremiumPrompt.addPet, .restorePet, .householdMembers, .documentScanning, .premiumFeature, .savedBrands] {
+        for prompt in [PremiumPrompt.addPet, .restorePet, .householdMembers, .documentStorage, .premiumFeature, .savedBrands] {
             XCTAssertFalse(prompt.title.isEmpty)
             XCTAssertFalse(prompt.message.isEmpty)
         }

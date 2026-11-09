@@ -180,4 +180,28 @@ enum HomeSchedule {
         var seen = Set<String>()
         return items.sorted { $0.date < $1.date }.filter { seen.insert($0.id).inserted }
     }
+
+    /// The Home card's rows (brief 2026-11-10): the nearest
+    /// UPCOMING appointment is pinned to the top — overdue items
+    /// and repeating feeding entries can no longer crowd it out of
+    /// the card — and the remaining slots fill chronologically.
+    /// The pinned appointment is excluded from the fill, so it
+    /// never appears twice. "Upcoming" means its time has not yet
+    /// passed (`date >= now`); an appointment from earlier today is
+    /// not pinned. The full schedule (View All) is unaffected and
+    /// keeps the plain chronological order from `build`. Pure and
+    /// testable.
+    static func homeCardItems(_ items: [ScheduleItem], now: Date = Date(), limit: Int = 5) -> [ScheduleItem] {
+        guard limit > 0 else { return [] }
+        let pinned = items
+            .filter { $0.kind == .appointment && $0.date >= now }
+            .min { $0.date < $1.date }
+        guard let pinned else { return Array(items.prefix(limit)) }
+        var result = [pinned]
+        for item in items where item.id != pinned.id {
+            guard result.count < limit else { break }
+            result.append(item)
+        }
+        return result
+    }
 }

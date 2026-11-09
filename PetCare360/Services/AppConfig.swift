@@ -48,14 +48,14 @@ enum PremiumProduct {
 }
 
 enum PremiumFeature: String, CaseIterable {
-    case unlimitedPets, householdSharing, fullMedicationHistory, unlimitedRecords, documentScanning, expenseTracking, insuranceOrganizer, advancedCharts, emergencyQR, advancedPDF, recallNotifications
+    case unlimitedPets, householdSharing, fullMedicationHistory, unlimitedRecords, documentStorage, expenseTracking, insuranceOrganizer, advancedCharts, emergencyQR, advancedPDF, recallNotifications
     var label: String {
         switch self {
         case .unlimitedPets: return "Unlimited pet profiles"
         case .householdSharing: return "Household coordination & caregiver roles"
         case .fullMedicationHistory: return "Full medication history"
         case .unlimitedRecords: return "Unlimited medical records"
-        case .documentScanning: return "Document scanning (on-device OCR)"
+        case .documentStorage: return "Document storage"
         case .expenseTracking: return "Expense tracking & reports"
         case .insuranceOrganizer: return "Insurance organizer"
         case .advancedCharts: return "Advanced health charts"
@@ -73,7 +73,7 @@ enum PremiumFeature: String, CaseIterable {
 /// as Premium benefits.
 extension PremiumFeature {
     static var paywallFeatures: [PremiumFeature] {
-        [.unlimitedPets, .householdSharing, .documentScanning, .expenseTracking,
+        [.unlimitedPets, .householdSharing, .documentStorage, .expenseTracking,
          .insuranceOrganizer, .advancedCharts, .emergencyQR, .advancedPDF, .recallNotifications]
     }
 }

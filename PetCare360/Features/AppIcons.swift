@@ -21,7 +21,7 @@ struct AppIconOption: Identifiable, Equatable {
         AppIconOption(id: "cat", label: "Cat", alternateName: "AppIconCat", previewImageName: "IconPreviewCat"),
         AppIconOption(id: "bird", label: "Bird", alternateName: "AppIconBird", previewImageName: "IconPreviewBird"),
         AppIconOption(id: "rabbit", label: "Rabbit", alternateName: "AppIconRabbit", previewImageName: "IconPreviewRabbit"),
-        AppIconOption(id: "reptile", label: "Reptiles", alternateName: "AppIconReptile", previewImageName: "IconPreviewReptile"),
+        AppIconOption(id: "turtle", label: "Turtle", alternateName: "AppIconTurtle", previewImageName: "IconPreviewTurtle"),
         AppIconOption(id: "horse", label: "Horses", alternateName: "AppIconHorse", previewImageName: "IconPreviewHorse"),
         AppIconOption(id: "other", label: "Other Pets", alternateName: "AppIconOther", previewImageName: "IconPreviewOther"),
     ]
@@ -41,7 +41,30 @@ enum AppIconService {
             completion("This device does not support alternate app icons.")
             return
         }
-        UIApplication.shared.setAlternateIconName(option.alternateName) { error in
+        let target = option.alternateName
+        // Same-name re-application fix (2026-11-10): when the
+        // requested icon is ALREADY the current alternate, setting
+        // the same name again gives iOS no name change, and it can
+        // keep serving artwork cached under that name from a
+        // previous bundle. Reset to the primary icon first, then
+        // set the target name in the completion — a genuine name
+        // change (nil → target) forces iOS to re-render the Home
+        // Screen icon from the current bundle. Only the supported
+        // public API is used, in both steps. (This is also why the
+        // old "AppIconReptile" set was retired in favour of the
+        // new "AppIconTurtle" set: a name that has never shipped
+        // before cannot carry artwork cached under it.)
+        if let target, target == currentAlternateName {
+            UIApplication.shared.setAlternateIconName(nil) { _ in
+                UIApplication.shared.setAlternateIconName(target) { error in
+                    DispatchQueue.main.async {
+                        completion(error?.localizedDescription)
+                    }
+                }
+            }
+            return
+        }
+        UIApplication.shared.setAlternateIconName(target) { error in
             DispatchQueue.main.async {
                 completion(error?.localizedDescription)
             }
@@ -106,15 +129,15 @@ struct AppIconPickerSection: View {
 
     private func select(_ option: AppIconOption) {
         // Deliberately NO "already selected" early return
-        // (bug fix, 2026-11-08): iOS persists an alternate-icon
-        // selection BY NAME across app updates, and the Home
-        // Screen can keep rendering the artwork the name pointed
-        // to in the PREVIOUS bundle — e.g. the old generated
-        // reptile icon after the owner's turtle artwork replaced
-        // it under the same "AppIconReptile" name. Re-applying
-        // the same name is the only way to make iOS re-render
-        // the icon from the current bundle, so tapping the
-        // current icon must re-apply it, not be swallowed.
+        // (bug fix, 2026-11-08; strengthened 2026-11-10): iOS
+        // persists an alternate-icon selection BY NAME across app
+        // updates, and the Home Screen can keep rendering the
+        // artwork the name pointed to in the PREVIOUS bundle —
+        // e.g. the old generated gecko after the owner's turtle
+        // artwork replaced it. AppIconService.setIcon now resets
+        // to the primary icon before re-setting the same name,
+        // which is what actually forces iOS to re-render; tapping
+        // the current icon must reach it, not be swallowed.
         AppIconService.setIcon(option) { error in
             if let error {
                 errorMessage = error

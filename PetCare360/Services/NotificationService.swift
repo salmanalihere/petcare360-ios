@@ -162,6 +162,36 @@ final class NotificationService {
         Task { _ = await requestAuthorizationIfNeeded() }
     }
 
+    /// THE identifier namespace contract (audit, 2026-11-10):
+    /// scheduling code works with RAW identifiers (`task-<uuid>-0`,
+    /// `appt-<uuid>`, `med-<uuid>-…`), but every request that
+    /// actually sits in the notification centre carries the
+    /// `pc360-` namespace, applied HERE and nowhere else — the
+    /// schedule funnel builds its UNNotificationRequest with this
+    /// helper, and every cancellation that matches pending
+    /// requests by id or prefix converts through it too. Cleanup
+    /// code must therefore NEVER compare a raw id or raw prefix
+    /// against pending identifiers directly; the regression tests
+    /// in PetCare360ApprovedFixesTests pin this contract for every
+    /// reminder category.
+    static func pendingIdentifier(for rawID: String) -> String {
+        "pc360-\(rawID)"
+    }
+
+    /// THE cleanup selection, as one pure function (review,
+    /// 2026-11-10): every snapshot-based cleanup in this service —
+    /// task edit/rebuild, dose and medication cancellation,
+    /// category/global prefix cancellation — decides what to
+    /// remove by selecting, from the identifiers currently pending
+    /// in the centre, exactly those carrying one of its PENDING-
+    /// FORM prefixes. Centralised so the regression tests exercise
+    /// the same selection the runtime performs, not a copy of it.
+    /// (This proves selection only; actual removal is the centre's
+    /// removePendingNotificationRequests call at each site.)
+    static func staleIdentifiers(in identifiers: [String], matchingAnyPrefix prefixes: [String]) -> [String] {
+        identifiers.filter { id in prefixes.contains { id.hasPrefix($0) } }
+    }
+
     private func schedule(id: String, title: String, body: String, fireDate: Date, repeatsDaily: Bool = false, soundName: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -174,7 +204,7 @@ final class NotificationService {
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
         let dailyComps = Calendar.current.dateComponents([.hour, .minute], from: fireDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: repeatsDaily ? dailyComps : comps, repeats: repeatsDaily)
-        let request = UNNotificationRequest(identifier: "pc360-\(id)", content: content, trigger: trigger)
+        let request = UNNotificationRequest(identifier: Self.pendingIdentifier(for: id), content: content, trigger: trigger)
         // LOCKED primitive (2026-11-09): this add is submitted
         // directly and must only be reached from within an
         // operation — every public scheduling entry point either
@@ -297,11 +327,11 @@ final class NotificationService {
     /// submitted afterwards is guaranteed to be submitted to the
     /// centre after this save's schedule.
     func cancelDoseReminders(medicationID: UUID, completion: (() -> Void)?) {
-        let prefix = "pc360-med-\(medicationID.uuidString)-"
+        let prefix = Self.pendingIdentifier(for: "med-\(medicationID.uuidString)-")
         let center = UNUserNotificationCenter.current()
         operations.submit { done in
             center.getPendingNotificationRequests { requests in
-                let ids = requests.map(\.identifier).filter { $0.hasPrefix(prefix) }
+                let ids = Self.staleIdentifiers(in: requests.map(\.identifier), matchingAnyPrefix: [prefix])
                 center.removePendingNotificationRequests(withIdentifiers: ids)
                 completion?()
                 done()
@@ -312,6 +342,238 @@ final class NotificationService {
     /// Completed appointments never get reminders; past ones neither.
     static func shouldScheduleAppointmentReminder(_ appointment: VetAppointment) -> Bool {
         !appointment.isCompleted && !appointment.isCancelled && appointment.date > Date()
+    }
+
+    // MARK: - Appointment reminders: one hour AND thirty minutes before (2026-11-10)
+
+    /// Every pending-request identifier belonging to one appointment:
+    /// the one-hour reminder keeps the historical `appt-` identifier
+    /// (so cancellations written before this change still match it),
+    /// and the thirty-minute reminder uses the `appt30-` identifier.
+    /// Cancellation paths must use this list so BOTH reminders are
+    /// always removed together.
+    static func appointmentReminderIDs(appointmentID: UUID) -> [String] {
+        ["appt-\(appointmentID.uuidString)", "appt30-\(appointmentID.uuidString)"]
+    }
+
+    /// The appointment reminders that can still fire for an
+    /// appointment at `date`, relative to `now`: one at one hour
+    /// before and one at thirty minutes before, omitting any whose
+    /// fire time has already passed. Pure and testable.
+    static func appointmentReminderSchedule(appointmentID: UUID, date: Date, now: Date = Date()) -> [(id: String, fireDate: Date)] {
+        let ids = appointmentReminderIDs(appointmentID: appointmentID)
+        return [(id: ids[0], fireDate: date.addingTimeInterval(-3600)),
+                (id: ids[1], fireDate: date.addingTimeInterval(-1800))]
+            .filter { $0.fireDate > now }
+    }
+
+    /// What the appointment editor must tell the user when one or
+    /// both reminder times have already passed, instead of silently
+    /// dropping them (2026-11-10). nil means both reminders can
+    /// still be scheduled. Pure and testable.
+    static func appointmentReminderNotice(appointmentDate: Date, now: Date = Date()) -> String? {
+        if appointmentDate <= now {
+            return "This appointment's time has already passed, so no reminders will be scheduled."
+        }
+        let hourPassed = appointmentDate.addingTimeInterval(-3600) <= now
+        let halfHourPassed = appointmentDate.addingTimeInterval(-1800) <= now
+        switch (hourPassed, halfHourPassed) {
+        case (true, true):
+            return "Both reminder times — 1 hour and 30 minutes before — have already passed, so no reminder will be scheduled for this appointment."
+        case (true, false):
+            return "The 1-hour reminder time has already passed, so only the 30-minute reminder will be scheduled."
+        default:
+            return nil
+        }
+    }
+
+    /// Schedules BOTH appointment reminders (one hour and thirty
+    /// minutes before), skipping any whose time has passed.
+    func scheduleAppointmentReminders(_ appointment: VetAppointment, petName: String, species: PetSpecies? = nil) {
+        operations.submit { done in
+            self.scheduleAppointmentRemindersLocked(appointment, petName: petName, species: species)
+            done()
+        }
+    }
+
+    /// Locked variant: callers must already hold the operation
+    /// queue (the public wrapper above, or a synchronization pass).
+    private func scheduleAppointmentRemindersLocked(_ appointment: VetAppointment, petName: String, species: PetSpecies? = nil) {
+        guard ReminderCategory.appointments.isEnabled,
+              Self.shouldScheduleAppointmentReminder(appointment) else { return }
+        for reminder in Self.appointmentReminderSchedule(appointmentID: appointment.id, date: appointment.date) {
+            schedule(id: reminder.id, title: "Vet appointment: \(petName)", body: appointment.title,
+                     fireDate: reminder.fireDate,
+                     soundName: NotificationSoundPreferences.resolvedFileName(species: species))
+        }
+    }
+
+    // MARK: - Care task reminders (2026-11-10)
+
+    /// Deterministic pending-request identifier for one occurrence
+    /// of a task reminder series. Stable across calls — the
+    /// occurrence index is the position on the repeat grid anchored
+    /// at the task's scheduled date, so re-scheduling the same task
+    /// replaces, never duplicates.
+    static func taskReminderID(taskID: UUID, occurrence: Int) -> String {
+        "task-\(taskID.uuidString)-\(occurrence)"
+    }
+
+    /// CareTask has no cancelled state (cancellation in the UI is
+    /// deletion, which cancels by prefix); a completed task never
+    /// gets reminders.
+    static func shouldScheduleTaskReminder(_ task: CareTask) -> Bool {
+        !task.isCompleted
+    }
+
+    /// The reminder series for one task: the scheduled time itself,
+    /// then a repeat every `intervalMinutes` while the task stays
+    /// incomplete. Fire dates lie on the grid anchored at
+    /// `scheduledDate`; only dates strictly after `now` are
+    /// returned, at most `maxOccurrences` of them. The series is a
+    /// rolling window — every synchronization pass recomputes it,
+    /// so an incomplete task keeps re-reminding as long as the app
+    /// is opened periodically (the same rolling-rebuild model the
+    /// medication reminders use). Pure and testable.
+    static func taskReminderPlan(scheduledDate: Date, now: Date, intervalMinutes: Int,
+                                 maxOccurrences: Int = 17) -> [(occurrence: Int, fireDate: Date)] {
+        let interval = TimeInterval(max(1, intervalMinutes) * 60)
+        var first = 0
+        if scheduledDate <= now {
+            first = Int((now.timeIntervalSince(scheduledDate) / interval).rounded(.down)) + 1
+        }
+        return (0..<maxOccurrences).map { offset in
+            let occurrence = first + offset
+            return (occurrence: occurrence,
+                    fireDate: scheduledDate.addingTimeInterval(TimeInterval(occurrence) * interval))
+        }
+    }
+
+    /// The (task, pet) pairs a rebuild pass may schedule: incomplete
+    /// tasks whose pet exists and is not archived, soonest first.
+    /// Pure and testable.
+    static func eligibleTaskReminders(tasks: [CareTask], pets: [Pet]) -> [(task: CareTask, petName: String, species: PetSpecies?)] {
+        let activePets = Dictionary(uniqueKeysWithValues: pets.filter { !$0.isArchived }.map { ($0.id, $0) })
+        return tasks.filter { shouldScheduleTaskReminder($0) }
+            .compactMap { task in
+                guard let pet = activePets[task.petID] else { return nil }
+                return (task: task, petName: pet.name, species: pet.species)
+            }
+            .sorted { $0.task.scheduledDate < $1.task.scheduledDate }
+    }
+
+    /// Schedules (or re-schedules) one task's reminder series as ONE
+    /// operation on the FIFO queue: the task's pending series is
+    /// removed from a snapshot and the fresh series added inside the
+    /// same operation, so an edit can never leave a stale occurrence
+    /// behind or interleave with another mutation.
+    func scheduleTaskReminder(task: CareTask, petName: String, species: PetSpecies? = nil) {
+        operations.submit { done in
+            self.scheduleTaskReminderLocked(task: task, petName: petName, species: species, completion: done)
+        }
+    }
+
+    /// Locked variant: callers must already hold the operation
+    /// queue (the public wrapper above, or a synchronization pass).
+    /// BUDGET (review correction, 2026-11-10): the series may only
+    /// use capacity inside the app's 60-request safety budget,
+    /// computed from the pending snapshot this operation already
+    /// takes — requests belonging to OTHER reminders (appointments,
+    /// medications, other tasks) count against the budget; this
+    /// task's own stale series does not, because it is removed
+    /// first. A task save can therefore never push the app past
+    /// the budget and crowd out appointment or medication
+    /// reminders at iOS's ~64 pending cap. If no capacity remains,
+    /// nothing is armed here; the next synchronization pass (which
+    /// rebuilds in priority order) arms the series instead.
+    private func scheduleTaskReminderLocked(task: CareTask, petName: String, species: PetSpecies?,
+                                            maxOccurrences: Int = 17, completion: @escaping () -> Void) {
+        let prefix = Self.pendingIdentifier(for: "task-\(task.id.uuidString)")
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let stale = Self.staleIdentifiers(in: requests.map(\.identifier), matchingAnyPrefix: [prefix])
+            if !stale.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: stale)
+            }
+            guard ReminderCategory.careTasks.isEnabled, Self.shouldScheduleTaskReminder(task) else {
+                completion()
+                return
+            }
+            let capacity = max(0, 60 - (requests.count - stale.count))
+            for entry in Self.taskReminderPlan(scheduledDate: task.scheduledDate, now: Date(),
+                                               intervalMinutes: TaskReminderPreferences.intervalMinutes,
+                                               maxOccurrences: min(maxOccurrences, capacity)) {
+                self.schedule(id: Self.taskReminderID(taskID: task.id, occurrence: entry.occurrence),
+                              title: "Care task for \(petName)",
+                              body: task.title.isEmpty ? "Scheduled care task" : task.title,
+                              fireDate: entry.fireDate,
+                              soundName: NotificationSoundPreferences.resolvedFileName(species: species))
+            }
+            completion()
+        }
+    }
+
+    /// Cancels every pending occurrence of one task's reminder
+    /// series (completion, deletion). Goes through the existing
+    /// queued prefix cancellation — never bypasses the queue.
+    func cancelTaskReminders(taskID: UUID) {
+        cancelPending(withPrefixes: ["task-\(taskID.uuidString)"])
+    }
+
+    /// Rebuilds every task reminder series from current data, as
+    /// part of a synchronization pass. Callers must already hold
+    /// the operation queue. All pending `task-` requests are removed
+    /// wholesale first (the medication-rebuild pattern), then the
+    /// eligible series are re-armed within a fixed total budget of
+    /// 30, allocated ROUND-ROBIN across tasks (review correction,
+    /// 2026-11-10 — see the allocation loop below) so task repeats
+    /// cannot crowd out the other reminder types at iOS's ~64
+    /// pending-request limit, and no eligible task is left with
+    /// zero reminders while another holds a full window. Save-time
+    /// scheduling arms the fuller series for the edited task,
+    /// within the same 60-request safety budget.
+    private func rebuildTaskRemindersLocked(pets: [Pet], tasks: [CareTask], completion: @escaping () -> Void) {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let stale = Self.staleIdentifiers(in: requests.map(\.identifier), matchingAnyPrefix: [Self.pendingIdentifier(for: ReminderCategory.careTasks.pendingPrefixes[0])])
+            if !stale.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: stale)
+            }
+            guard ReminderCategory.careTasks.isEnabled else { completion(); return }
+            // ROUND-ROBIN allocation (review correction,
+            // 2026-11-10): the budget of 30 is dealt one occurrence
+            // at a time across ALL eligible tasks — every task's
+            // next occurrence first, then every task's second, and
+            // so on, up to 6 per task — instead of filling the
+            // soonest tasks to 6 and leaving later tasks with none.
+            // 1 task gets 6; 5 tasks get 6 each; 10 tasks get 3
+            // each; per-task counts never differ by more than one.
+            // Each task's own occurrences remain its repeat-grid
+            // points in chronological order. Eligibility is
+            // unchanged: completed tasks, tasks of archived or
+            // deleted pets, and a disabled category are excluded by
+            // eligibleTaskReminders and the guard above.
+            let eligible = Self.eligibleTaskReminders(tasks: tasks, pets: pets)
+            let plans = eligible.map { entry in
+                (entry: entry,
+                 plan: Self.taskReminderPlan(scheduledDate: entry.task.scheduledDate, now: Date(),
+                                             intervalMinutes: TaskReminderPreferences.intervalMinutes,
+                                             maxOccurrences: 6))
+            }
+            var budget = 30
+            for round in 0..<6 where budget > 0 {
+                for item in plans where budget > 0 {
+                    let point = item.plan[round]
+                    self.schedule(id: Self.taskReminderID(taskID: item.entry.task.id, occurrence: point.occurrence),
+                                  title: "Care task for \(item.entry.petName)",
+                                  body: item.entry.task.title.isEmpty ? "Scheduled care task" : item.entry.task.title,
+                                  fireDate: point.fireDate,
+                                  soundName: NotificationSoundPreferences.resolvedFileName(species: item.entry.species))
+                    budget -= 1
+                }
+            }
+            completion()
+        }
     }
 
     func rescheduleAllMedicationReminders(pets: [Pet], schedules: [MedicationSchedule], remindersEnabled: Bool, completion: (() -> Void)? = nil) {
@@ -335,7 +597,7 @@ final class NotificationService {
             guard settings.authorizationStatus == .authorized
                     || settings.authorizationStatus == .provisional else { completion?(); return }
             center.getPendingNotificationRequests { requests in
-                let stale = requests.map(\.identifier).filter { $0.hasPrefix("pc360-med-") }
+                let stale = Self.staleIdentifiers(in: requests.map(\.identifier), matchingAnyPrefix: [Self.pendingIdentifier(for: "med-")])
                 center.removePendingNotificationRequests(withIdentifiers: stale)
                 var budget = max(0, 60 - (requests.count - stale.count))
                 for eligible in Self.eligibleReminders(pets: pets, schedules: schedules) {
@@ -354,8 +616,8 @@ final class NotificationService {
     /// its dose reminders AND its refill reminder (which uses a different
     /// identifier shape). Deletion paths rely on this being complete.
     static func medicationCancellationPrefixes(medicationID: UUID) -> [String] {
-        ["pc360-med-\(medicationID.uuidString)-",
-         "pc360-\(refillReminderID(medicationID: medicationID))"]
+        [pendingIdentifier(for: "med-\(medicationID.uuidString)-"),
+         pendingIdentifier(for: refillReminderID(medicationID: medicationID))]
     }
 
     static func refillReminderID(medicationID: UUID) -> String {
@@ -367,7 +629,7 @@ final class NotificationService {
         let center = UNUserNotificationCenter.current()
         operations.submit { done in
             center.getPendingNotificationRequests { requests in
-                let ids = requests.map(\.identifier).filter { id in prefixes.contains { id.hasPrefix($0) } }
+                let ids = Self.staleIdentifiers(in: requests.map(\.identifier), matchingAnyPrefix: prefixes)
                 center.removePendingNotificationRequests(withIdentifiers: ids)
                 done()
             }
@@ -399,7 +661,7 @@ final class NotificationService {
 
     private func scheduleOneOffLocked(id: String, title: String, body: String, fireDate: Date, species: PetSpecies? = nil) {
         guard fireDate > Date() else { return }
-        if id.hasPrefix("appt-"), !ReminderCategory.appointments.isEnabled { return }
+        if id.hasPrefix("appt-") || id.hasPrefix("appt30-"), !ReminderCategory.appointments.isEnabled { return }
         if id.hasPrefix("ins-"), !ReminderCategory.insurance.isEnabled { return }
         schedule(id: id, title: title, body: body, fireDate: fireDate,
                  soundName: NotificationSoundPreferences.resolvedFileName(species: species))
@@ -462,14 +724,14 @@ final class NotificationService {
 
     /// THE centralized reminder synchronization entry point (v1.2.5):
     /// launch, foreground, Settings re-enable and pet restoration all
-    /// call this. The whole pass — category cleanup, medication
-    /// rebuild, one-off rebuild — runs as ONE operation on the FIFO
+    /// call this. The whole pass — category cleanup, one-off rebuild,
+    /// care-task rebuild, medication rebuild — runs as ONE operation on the FIFO
     /// queue (2026-11-09; previously SyncCoordinator, whose
     /// coalescing could drop a queued pass — the FIFO queue runs
     /// every pass, in order, never interleaved with an editor's
     /// cancel/schedule sequence or a cancelAll).
     func synchronizeReminders(pets: [Pet], schedules: [MedicationSchedule],
-                              policies: [InsurancePolicy], remindersEnabled: Bool) {
+                              policies: [InsurancePolicy], tasks: [CareTask], remindersEnabled: Bool) {
         operations.submit { done in
             // Category cleanup (2026-11-06): a category the user
             // switched off loses its pending requests at the next
@@ -480,12 +742,23 @@ final class NotificationService {
                 ? ReminderCategory.allCases.filter { !$0.isEnabled }
                 : []
             self.cancelPendingLocked(withPrefixes: disabled.flatMap(\.pendingPrefixes)) {
-                self.rescheduleAllMedicationRemindersLocked(pets: pets, schedules: schedules,
-                                                              remindersEnabled: remindersEnabled) {
-                    if remindersEnabled {
-                        self.rebuildOneOffReminders(pets: pets, policies: policies) { done() }
-                    } else {
-                        done()
+                guard remindersEnabled else { done(); return }
+                // REBUILD ORDER (2026-11-10): one-off reminders
+                // (appointments, vaccinations, insurance, feeding)
+                // and care-task series rebuild BEFORE medication
+                // reminders. Appointment reminders are typically the
+                // farthest-future pendings and were being discarded
+                // when the medication rebuild — up to 60 requests —
+                // filled iOS's ~64 pending-request cap first. The
+                // medication rebuild computes its budget from the
+                // pending snapshot taken when IT starts, so it now
+                // yields to the one-offs and tasks already armed.
+                self.rebuildOneOffReminders(pets: pets, policies: policies) {
+                    self.rebuildTaskRemindersLocked(pets: pets, tasks: tasks) {
+                        self.rescheduleAllMedicationRemindersLocked(pets: pets, schedules: schedules,
+                                                                    remindersEnabled: remindersEnabled) {
+                            done()
+                        }
                     }
                 }
             }
@@ -501,9 +774,7 @@ final class NotificationService {
                 scheduleVaccinationReminderLocked(vax, petName: pet.name)
             }
             for appt in pet.appointments where Self.shouldScheduleAppointmentReminder(appt) {
-                scheduleOneOffLocked(id: "appt-\(appt.id.uuidString)",
-                               title: "Vet appointment: \(pet.name)", body: appt.title,
-                               fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
+                scheduleAppointmentRemindersLocked(appt, petName: pet.name, species: pet.species)
             }
         }
         for policy in Self.eligibleInsurancePolicies(policies: policies, pets: pets) {
@@ -542,7 +813,7 @@ final class NotificationService {
         // cancellation-before-add behavior is preserved by the
         // queue itself rather than by same-call-stack timing.
         operations.submit { done in
-            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids.map { "pc360-\($0)" })
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids.map { Self.pendingIdentifier(for: $0) })
             done()
         }
     }
@@ -562,10 +833,10 @@ final class NotificationService {
     /// immediately without touching the centre.
     private func cancelPendingLocked(withPrefixes prefixes: [String], completion: @escaping () -> Void) {
         guard !prefixes.isEmpty else { completion(); return }
-        let namespaced = prefixes.map { "pc360-\($0)" }
+        let namespaced = prefixes.map { Self.pendingIdentifier(for: $0) }
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { requests in
-            let ids = requests.map(\.identifier).filter { id in namespaced.contains { id.hasPrefix($0) } }
+            let ids = Self.staleIdentifiers(in: requests.map(\.identifier), matchingAnyPrefix: namespaced)
             center.removePendingNotificationRequests(withIdentifiers: ids)
             completion()
         }
@@ -581,7 +852,7 @@ final class NotificationService {
         let soundName = NotificationSoundPreferences.resolvedFileName(species: species)
         content.sound = soundName.map { UNNotificationSound(named: UNNotificationSoundName(rawValue: $0)) } ?? .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
-        let request = UNNotificationRequest(identifier: "pc360-test-\(UUID().uuidString)", content: content, trigger: trigger)
+        let request = UNNotificationRequest(identifier: Self.pendingIdentifier(for: "test-\(UUID().uuidString)"), content: content, trigger: trigger)
         operations.submit { done in
             UNUserNotificationCenter.current().add(request)
             done()

@@ -522,7 +522,7 @@ struct SettingsView: View {
                                     // preferences respected) and the
                                     // one-off types from current data.
                                     NotificationService.shared.synchronizeReminders(
-                                        pets: allPets, schedules: allSchedules, policies: allPolicies,
+                                        pets: allPets, schedules: allSchedules, policies: allPolicies, tasks: allTasks,
                                         remindersEnabled: true)
                                 } else {
                                     // Never silently pretend reminders are
@@ -680,7 +680,7 @@ struct SettingsView: View {
     private func categoryToggled(_ category: ReminderCategory, on: Bool) {
         if on {
             NotificationService.shared.synchronizeReminders(
-                pets: allPets, schedules: allSchedules, policies: allPolicies,
+                pets: allPets, schedules: allSchedules, policies: allPolicies, tasks: allTasks,
                 remindersEnabled: profiles.first?.remindersEnabled ?? true)
         } else {
             NotificationService.shared.cancelPending(withPrefixes: category.pendingPrefixes)

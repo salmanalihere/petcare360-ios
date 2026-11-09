@@ -103,6 +103,18 @@ struct HomeView: View {
                             if task.isCompleted {
                                 task.completedAt = Date()
                                 task.completedBy = profiles.first?.displayName ?? "Me"
+                                // Completing stops the task's
+                                // reminders immediately (2026-11-10).
+                                NotificationService.shared.cancelTaskReminders(taskID: task.id)
+                            } else if profiles.first?.remindersEnabled ?? true {
+                                let pet = pets.first(where: { $0.id == task.petID })
+                                // Authorization approach matches the
+                                // task editor (review, 2026-11-10): see
+                                // CareView.updateTaskReminders.
+                                NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                                    NotificationService.shared.scheduleTaskReminder(
+                                        task: task, petName: pet?.name ?? task.petName, species: pet?.species)
+                                }
                             }
                         } label: {
                             Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
@@ -160,7 +172,7 @@ struct HomeView: View {
                 Text("Nothing scheduled in the next 30 days.")
                     .font(.subheadline).foregroundStyle(PCColor.secondaryText)
             } else {
-                ForEach(scheduleItems.prefix(5)) { item in
+                ForEach(HomeSchedule.homeCardItems(scheduleItems)) { item in
                     if let pet = pets.first(where: { $0.id == item.petID }) {
                         NavigationLink { PetDetailView(pet: pet) } label: { ScheduleRow(item: item, pet: pet) }
                             .buttonStyle(.plain)

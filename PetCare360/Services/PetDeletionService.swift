@@ -27,15 +27,17 @@ enum PetDeletionService {
         // been saved (v1.2.6 ordering), so a failed deletion leaves the
         // pet's reminders untouched.
         var oneOffIDs = pet.vaccinations.map { "vax-\($0.id.uuidString)" }
-            + pet.appointments.map { "appt-\($0.id.uuidString)" }
+            + pet.appointments.flatMap { NotificationService.appointmentReminderIDs(appointmentID: $0.id) }
             + pet.foodSchedules.map { "feed-\($0.id.uuidString)" }
         let policies = try context.fetch(FetchDescriptor<InsurancePolicy>(
             predicate: #Predicate { $0.petID == petID }))
         oneOffIDs += policies.map { "ins-\($0.id.uuidString)" }
 
         // Standalone records linked only by petID / petName / medicationID.
+        var taskIDs: [UUID] = []
         for task in try context.fetch(FetchDescriptor<CareTask>(
             predicate: #Predicate { $0.petID == petID })) {
+            taskIDs.append(task.id)
             context.delete(task); removed += 1
         }
         for log in try context.fetch(FetchDescriptor<FeedingLog>(
@@ -64,6 +66,9 @@ enum PetDeletionService {
         for medicationID in medicationIDs {
             NotificationService.shared.cancelMedicationReminders(medicationID: medicationID)
         }
+        for taskID in taskIDs {
+            NotificationService.shared.cancelTaskReminders(taskID: taskID)
+        }
         NotificationService.shared.cancel(ids: oneOffIDs)
         return removed
     }
@@ -78,7 +83,7 @@ enum PetDeletionService {
             NotificationService.shared.cancelMedicationReminders(medicationID: medication.id)
         }
         var ids = pet.vaccinations.map { "vax-\($0.id.uuidString)" }
-            + pet.appointments.map { "appt-\($0.id.uuidString)" }
+            + pet.appointments.flatMap { NotificationService.appointmentReminderIDs(appointmentID: $0.id) }
             + pet.foodSchedules.map { "feed-\($0.id.uuidString)" }
         let petID = pet.id
         if let policies = try? context.fetch(FetchDescriptor<InsurancePolicy>(
@@ -86,6 +91,15 @@ enum PetDeletionService {
             ids += policies.map { "ins-\($0.id.uuidString)" }
         }
         NotificationService.shared.cancel(ids: ids)
+        // An archived pet's care tasks must not keep reminding
+        // either (2026-11-10); restoring the pet re-arms them
+        // through the normal synchronization.
+        if let tasks = try? context.fetch(FetchDescriptor<CareTask>(
+            predicate: #Predicate { $0.petID == petID })) {
+            for task in tasks {
+                NotificationService.shared.cancelTaskReminders(taskID: task.id)
+            }
+        }
     }
 }
 
@@ -114,9 +128,10 @@ enum PetArchiveService {
         if let pets = try? context.fetch(FetchDescriptor<Pet>()),
            let schedules = try? context.fetch(FetchDescriptor<MedicationSchedule>()),
            let policies = try? context.fetch(FetchDescriptor<InsurancePolicy>()),
+           let tasks = try? context.fetch(FetchDescriptor<CareTask>()),
            let profiles = try? context.fetch(FetchDescriptor<UserProfile>()) {
             NotificationService.shared.synchronizeReminders(
-                pets: pets, schedules: schedules, policies: policies,
+                pets: pets, schedules: schedules, policies: policies, tasks: tasks,
                 remindersEnabled: profiles.first?.remindersEnabled ?? true)
         }
         return .done

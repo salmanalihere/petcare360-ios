@@ -20,9 +20,9 @@ struct PremiumPrompt {
         title: "Care Together with Premium",
         message: "Adding household members is a PetCare 360 Premium feature. Upgrade to organise owners, family, sitters and walkers for your pets.")
 
-    static let documentScanning = PremiumPrompt(
-        title: "Scanning Is a Premium Feature",
-        message: "Document scanning with on-device text extraction is part of PetCare 360 Premium. Upgrade to scan veterinary documents straight into your pet's records.")
+    static let documentStorage = PremiumPrompt(
+        title: "Document Storage Is a Premium Feature",
+        message: "Storing documents with your pets' records is part of PetCare 360 Premium. Upgrade to keep vaccination certificates, lab results and other documents organised with each pet.")
 
     static let premiumFeature = PremiumPrompt(
         title: "A Premium Feature",
