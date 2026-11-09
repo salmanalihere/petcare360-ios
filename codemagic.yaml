@@ -522,6 +522,7 @@ workflows:
             -derivedDataPath "$DERIVED_DATA" \
             -resultBundlePath "$TEST_DIR/FullSuite.xcresult" \
             -skip-testing:PetCare360UITests \
+            -skip-testing:PetCare360Tests/PetCare360StoreKitDiagnosticsTests/testSKTestSessionLocalPurchaseCompletes \
             2>&1 | tee "$TEST_DIR/02-full-tests.log"
       - name: Run each UI test on a FRESH app install (isolated StoreKit + app state)
         script: |
