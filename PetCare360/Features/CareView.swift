@@ -203,8 +203,10 @@ struct MedicationSlotRow: View {
         context.insert(entry)
         if status == .given && medication.remainingSupply > 0 {
             medication.remainingSupply -= 1
-            if medication.needsRefill && (profiles.first?.remindersEnabled ?? false) {
-                NotificationService.shared.scheduleRefillReminder(medication: medication, petName: pet.name)
+            if medication.needsRefill && (profiles.first?.remindersEnabled ?? true) {
+                NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                    NotificationService.shared.scheduleRefillReminder(medication: medication, petName: pet.name)
+                }
             }
         }
         do { try context.save() } catch {
@@ -536,11 +538,15 @@ struct MedicationEditorView: View {
         }
         // Cancel FIRST and schedule only from the cancellation's
         // completion, so a late removal snapshot can never delete the
-        // reminders this save just created (v1.2.4 race fix).
-        let shouldSchedule = enableReminder && isActive && (profiles.first?.remindersEnabled ?? false)
+        // reminders this save just created (v1.2.4 race fix). The
+        // completion runs INSIDE the cancellation's queue operation,
+        // which is why it calls the Locked scheduling variant.
+        let shouldSchedule = enableReminder && isActive && (profiles.first?.remindersEnabled ?? true)
         NotificationService.shared.cancelDoseReminders(medicationID: med.id) {
             if shouldSchedule {
-                NotificationService.shared.scheduleMedicationReminder(medication: med, petName: pet.name)
+                NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                    NotificationService.shared.scheduleMedicationReminderLocked(medication: med, petName: pet.name)
+                }
             }
         }
         dismiss()
@@ -738,8 +744,10 @@ struct FoodScheduleEditorView: View {
                 saveError = "Your changes could not be saved on this device. Nothing was closed — please try again."
                 return
             }
-            if isActive, profiles.first?.remindersEnabled ?? false, let petName = existing.pet?.name {
-                NotificationService.shared.scheduleFeedingReminder(schedule: existing, petName: petName)
+            if isActive, profiles.first?.remindersEnabled ?? true, let petName = existing.pet?.name {
+                NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                    NotificationService.shared.scheduleFeedingReminder(schedule: existing, petName: petName)
+                }
             } else {
                 // Deactivated: its daily notification must not survive.
                 NotificationService.shared.cancel(ids: ["feed-\(existing.id.uuidString)"])
@@ -759,8 +767,10 @@ struct FoodScheduleEditorView: View {
             saveError = "Your changes could not be saved on this device. Nothing was closed — please try again."
             return
         }
-        if isActive && (profiles.first?.remindersEnabled ?? false) {
-            NotificationService.shared.scheduleFeedingReminder(schedule: food, petName: pet.name)
+        if isActive && (profiles.first?.remindersEnabled ?? true) {
+            NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                NotificationService.shared.scheduleFeedingReminder(schedule: food, petName: pet.name)
+            }
         }
         dismiss()
     }

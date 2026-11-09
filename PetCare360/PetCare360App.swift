@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 @main
 struct PetCare360App: App {
@@ -15,6 +16,10 @@ struct PetCare360App: App {
     @State private var storage: StorageState
 
     init() {
+        // Foreground reminders need a presentation delegate, and it
+        // must be set before any notification can fire (see
+        // NotificationPresenter in NotificationService.swift).
+        UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
         Self.resetAppLocalStateForUITestingIfRequested()
         _storage = State(initialValue: Self.openStorage())
     }

@@ -347,8 +347,10 @@ struct VaccinationEditorView: View {
             return
         }
         NotificationService.shared.cancel(ids: ["vax-\(vax.id.uuidString)"])
-        if profiles.first?.remindersEnabled ?? false {
-            NotificationService.shared.scheduleVaccinationReminder(vax, petName: pet.name)
+        if profiles.first?.remindersEnabled ?? true {
+            NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                NotificationService.shared.scheduleVaccinationReminder(vax, petName: pet.name)
+            }
         }
         dismiss()
     }
@@ -461,6 +463,7 @@ struct DocumentDetailView: View {
 struct AppointmentsView: View {
     @Environment(\.modelContext) private var context
     @Bindable var pet: Pet
+    @Query private var profiles: [UserProfile]
 
     /// Status changes save immediately; the reminder is cancelled or
     /// rescheduled to match, and a failure rolls back with an error.
@@ -475,7 +478,12 @@ struct AppointmentsView: View {
             return
         }
         NotificationService.shared.cancel(ids: ["appt-\(appt.id.uuidString)"])
-        if NotificationService.shouldScheduleAppointmentReminder(appt) {
+        // Global gate (audit fix, 2026-11-09): the appointment
+        // editor checks remindersEnabled before scheduling; this
+        // status path did not, so un-completing an appointment
+        // re-added its reminder while global reminders were off.
+        if (profiles.first?.remindersEnabled ?? true)
+            && NotificationService.shouldScheduleAppointmentReminder(appt) {
             NotificationService.shared.scheduleOneOff(
                 id: "appt-\(appt.id.uuidString)", title: "Vet appointment: \(pet.name)",
                 body: appt.title, fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
@@ -623,11 +631,13 @@ struct AppointmentEditorView: View {
             return
         }
         NotificationService.shared.cancel(ids: ["appt-\(appt.id.uuidString)"])
-        if (profiles.first?.remindersEnabled ?? false)
+        if (profiles.first?.remindersEnabled ?? true)
             && NotificationService.shouldScheduleAppointmentReminder(appt) {
-            NotificationService.shared.scheduleOneOff(
-                id: "appt-\(appt.id.uuidString)", title: "Vet appointment: \(pet.name)",
-                body: title, fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
+            NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                NotificationService.shared.scheduleOneOff(
+                    id: "appt-\(appt.id.uuidString)", title: "Vet appointment: \(pet.name)",
+                    body: title, fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
+            }
         }
         dismiss()
     }
@@ -1047,10 +1057,12 @@ struct InsuranceEditorView: View {
             return
         }
         NotificationService.shared.cancel(ids: ["ins-\(policy.id.uuidString)"])
-        if hasRenewal && (profiles.first?.remindersEnabled ?? false) {
+        if hasRenewal && (profiles.first?.remindersEnabled ?? true) {
             let fire = Calendar.current.date(byAdding: .day, value: -14, to: renewal) ?? renewal
-            NotificationService.shared.scheduleOneOff(id: "ins-\(policy.id.uuidString)",
-                title: "Insurance renewal soon", body: "\(pet.name): \(provider) renews soon", fireDate: fire)
+            NotificationService.shared.scheduleAndRequestAuthorizationIfNeeded {
+                NotificationService.shared.scheduleOneOff(id: "ins-\(policy.id.uuidString)",
+                    title: "Insurance renewal soon", body: "\(pet.name): \(provider) renews soon", fireDate: fire)
+            }
         }
         dismiss()
     }

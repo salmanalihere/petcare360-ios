@@ -117,7 +117,7 @@ enum PetArchiveService {
            let profiles = try? context.fetch(FetchDescriptor<UserProfile>()) {
             NotificationService.shared.synchronizeReminders(
                 pets: pets, schedules: schedules, policies: policies,
-                remindersEnabled: profiles.first?.remindersEnabled ?? false)
+                remindersEnabled: profiles.first?.remindersEnabled ?? true)
         }
         return .done
     }

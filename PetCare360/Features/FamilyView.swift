@@ -510,7 +510,7 @@ struct SettingsView: View {
             }
             Section("Reminders") {
                 Toggle("Enable reminders", isOn: Binding(
-                    get: { profiles.first?.remindersEnabled ?? false },
+                    get: { profiles.first?.remindersEnabled ?? true },
                     set: { newValue in
                         if let profile = profiles.first { profile.remindersEnabled = newValue }
                         if newValue {
@@ -681,7 +681,7 @@ struct SettingsView: View {
         if on {
             NotificationService.shared.synchronizeReminders(
                 pets: allPets, schedules: allSchedules, policies: allPolicies,
-                remindersEnabled: profiles.first?.remindersEnabled ?? false)
+                remindersEnabled: profiles.first?.remindersEnabled ?? true)
         } else {
             NotificationService.shared.cancelPending(withPrefixes: category.pendingPrefixes)
         }

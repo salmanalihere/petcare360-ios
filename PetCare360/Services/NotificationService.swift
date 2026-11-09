@@ -34,9 +34,90 @@ final class SyncCoordinator {
     }
 }
 
-/// Local notifications only. Authorization is requested solely when the
-/// user enables reminders. Identifiers are namespaced `pc360-` and are
-/// deterministic per schedule, so re-scheduling never duplicates.
+/// Strict FIFO serialization for notification-centre mutations
+/// (ordering review fix, 2026-11-09). Unlike SyncCoordinator this
+/// queue NEVER coalesces: every submitted operation runs, exactly
+/// once, in submission order, and the next operation does not begin
+/// until the running one calls its completion — including any
+/// asynchronous getPendingNotificationRequests snapshot the
+/// operation performs and any scheduling its completion performs.
+///
+/// Why: the only ordering UNUserNotificationCenter leaves to the
+/// app is the order in which the app SUBMITS calls, and the app's
+/// cancel-then-reschedule flows submit their follow-up calls from
+/// getPending completion handlers. Without serialization, two
+/// overlapping flows (two rapid saves of one medication, a save and
+/// a global cancelAll) can have their completions fire in either
+/// order, letting the OLDER action's schedule land after the NEWER
+/// action's cancellation. Routing every snapshot-based cancel,
+/// cancelAll, and synchronization pass through this single queue
+/// makes submission order equal to user-action order, so the
+/// latest action always wins. ALL centre mutations go through
+/// this queue — adds, explicit-id cancels, cancelAll, snapshot
+/// cancels and sync passes (final review fix, 2026-11-09): a
+/// queued operation's centre calls are only submitted when the
+/// operation RUNS, so a direct add could otherwise land between
+/// a queued operation's enqueue and its execution and be removed
+/// by it, or survive a removal it should not. Code already
+/// running inside an operation uses the Locked variants, which
+/// mutate directly as part of that operation. Pure logic, same
+/// pattern as SyncCoordinator.
+final class NotificationOperationQueue {
+    private let stateQueue = DispatchQueue(label: "com.xenon-media.petcare360.notification-operations")
+    private var running = false
+    private var pending: [(@escaping () -> Void) -> Void] = []
+
+    /// `work` receives a completion it MUST call exactly once when
+    /// all of its asynchronous steps have finished.
+    func submit(_ work: @escaping (@escaping () -> Void) -> Void) {
+        stateQueue.async {
+            self.pending.append(work)
+            self.pump()
+        }
+    }
+
+    private func pump() {
+        guard !running, !pending.isEmpty else { return }
+        running = true
+        let work = pending.removeFirst()
+        work {
+            self.stateQueue.async {
+                self.running = false
+                self.pump()
+            }
+        }
+    }
+}
+
+/// Foreground presentation (2026-11-09 reliability fix): the app
+/// previously set NO UNUserNotificationCenter delegate, so iOS
+/// applied its default foreground behaviour — a reminder that fired
+/// while the app was open was silently swallowed (no banner, no
+/// sound). This presenter asks iOS to present foreground reminders
+/// the same way as background ones. It is installed once, in
+/// PetCare360App.init, before any reminder can fire. It changes
+/// presentation ONLY; delivery itself is always iOS's decision.
+final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationPresenter()
+    private override init() { super.init() }
+
+    /// The options requested for foreground delivery: banner,
+    /// Notification Centre list, sound and badge. Exposed as a
+    /// plain value so the configuration is unit-testable without a
+    /// running notification centre.
+    static let foregroundOptions: UNNotificationPresentationOptions = [.banner, .list, .sound, .badge]
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        Self.foregroundOptions
+    }
+}
+
+/// Local notifications only. Authorization is requested when the
+/// user enables reminders — during onboarding, in Settings, or the
+/// first time a reminder is saved. Identifiers are namespaced
+/// `pc360-` and are deterministic per schedule, so re-scheduling
+/// never duplicates.
 final class NotificationService {
     static let shared = NotificationService()
     private init() {}
@@ -52,6 +133,35 @@ final class NotificationService {
         }
     }
 
+    /// Schedules a reminder AND makes sure notification permission
+    /// has been REQUESTED at least once. Reminder editor saves use
+    /// this: previously they scheduled without ever asking, so a
+    /// user who skipped the onboarding personalization pages was
+    /// never prompted and iOS silently dropped every reminder.
+    ///
+    /// ORDER IS LOAD-BEARING (review fix, 2026-11-09): the schedule
+    /// runs FIRST, synchronously, in the caller's own sequencing —
+    /// for the medication editor that is inside the
+    /// cancel-then-schedule completion, so the v1.2.4 guarantee
+    /// (a save's cancellation always lands before its scheduling,
+    /// and any later cancelAll / category cancel lands after and
+    /// wins) is preserved exactly. The authorization request runs
+    /// afterwards in a detached Task. An earlier version of this
+    /// helper awaited the request BEFORE scheduling, which parked
+    /// the closure for as long as the iOS prompt stayed open: a
+    /// reminder disabled in the meantime (per-medication toggle,
+    /// category toggle, or the global cancelAll) would then be
+    /// resurrected by the parked closure landing afterwards, and
+    /// rapid successive edits could execute out of order.
+    /// Scheduling before the prompt is safe: iOS stores the
+    /// requests but delivers nothing unless permission is granted,
+    /// and the launch/foreground synchronization re-arms everything
+    /// once the user allows notifications in iOS Settings.
+    func scheduleAndRequestAuthorizationIfNeeded(_ schedule: () -> Void) {
+        schedule()
+        Task { _ = await requestAuthorizationIfNeeded() }
+    }
+
     private func schedule(id: String, title: String, body: String, fireDate: Date, repeatsDaily: Bool = false, soundName: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -65,6 +175,13 @@ final class NotificationService {
         let dailyComps = Calendar.current.dateComponents([.hour, .minute], from: fireDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: repeatsDaily ? dailyComps : comps, repeats: repeatsDaily)
         let request = UNNotificationRequest(identifier: "pc360-\(id)", content: content, trigger: trigger)
+        // LOCKED primitive (2026-11-09): this add is submitted
+        // directly and must only be reached from within an
+        // operation — every public scheduling entry point either
+        // enqueues an operation that calls its Locked variant, or
+        // is itself a Locked variant called inside one. That is
+        // what makes the order of centre submissions identical to
+        // the order of user actions across every mutation path.
         UNUserNotificationCenter.current().add(request)
     }
 
@@ -84,8 +201,12 @@ final class NotificationService {
     /// identifier, so re-scheduling never duplicates. `budget` caps how
     /// many new requests may be added (iOS allows ~64 pending per app);
     /// returns the remaining budget.
+    /// LOCKED (2026-11-09): every caller already runs inside an
+    /// operation — the medication editor's dose-cancellation
+    /// completion and rescheduleAllLocked — so the adds are
+    /// submitted directly as part of that operation.
     @discardableResult
-    func scheduleMedicationReminder(medication: Medication, petName: String, budget: Int = .max) -> Int {
+    func scheduleMedicationReminderLocked(medication: Medication, petName: String, budget: Int = .max) -> Int {
         guard ReminderCategory.medications.isEnabled else { return budget }
         var remaining = budget
         let calendar = Calendar.current
@@ -168,13 +289,23 @@ final class NotificationService {
     /// been submitted, so callers that cancel-then-reschedule (the
     /// medication editor) cannot have their new requests removed by a
     /// late-running snapshot of the old ones (v1.2.4 race fix).
+    /// The whole sequence — snapshot, removal, AND the completion
+    /// (whose scheduling is therefore submitted before this
+    /// operation ends) — runs as ONE operation on the FIFO queue
+    /// (2026-11-09): two rapid saves of the same medication can no
+    /// longer have their completions interleave, and a cancelAll
+    /// submitted afterwards is guaranteed to be submitted to the
+    /// centre after this save's schedule.
     func cancelDoseReminders(medicationID: UUID, completion: (() -> Void)?) {
         let prefix = "pc360-med-\(medicationID.uuidString)-"
         let center = UNUserNotificationCenter.current()
-        center.getPendingNotificationRequests { requests in
-            let ids = requests.map(\.identifier).filter { $0.hasPrefix(prefix) }
-            center.removePendingNotificationRequests(withIdentifiers: ids)
-            completion?()
+        operations.submit { done in
+            center.getPendingNotificationRequests { requests in
+                let ids = requests.map(\.identifier).filter { $0.hasPrefix(prefix) }
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+                completion?()
+                done()
+            }
         }
     }
 
@@ -184,6 +315,20 @@ final class NotificationService {
     }
 
     func rescheduleAllMedicationReminders(pets: [Pet], schedules: [MedicationSchedule], remindersEnabled: Bool, completion: (() -> Void)? = nil) {
+        operations.submit { done in
+            self.rescheduleAllMedicationRemindersLocked(pets: pets, schedules: schedules,
+                                                        remindersEnabled: remindersEnabled) {
+                completion?()
+                done()
+            }
+        }
+    }
+
+    /// The reschedule itself. Callers must already hold the
+    /// operation queue (the public wrapper above, or a
+    /// synchronization pass) — this variant never submits its own
+    /// operation, so passes cannot deadlock waiting for themselves.
+    private func rescheduleAllMedicationRemindersLocked(pets: [Pet], schedules: [MedicationSchedule], remindersEnabled: Bool, completion: (() -> Void)? = nil) {
         guard remindersEnabled else { completion?(); return }
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
@@ -194,7 +339,7 @@ final class NotificationService {
                 center.removePendingNotificationRequests(withIdentifiers: stale)
                 var budget = max(0, 60 - (requests.count - stale.count))
                 for eligible in Self.eligibleReminders(pets: pets, schedules: schedules) {
-                    budget = self.scheduleMedicationReminder(medication: eligible.medication, petName: eligible.petName, budget: budget)
+                    budget = self.scheduleMedicationReminderLocked(medication: eligible.medication, petName: eligible.petName, budget: budget)
                 }
                 completion?()
             }
@@ -219,13 +364,24 @@ final class NotificationService {
 
     func cancelMedicationReminders(medicationID: UUID) {
         let prefixes = Self.medicationCancellationPrefixes(medicationID: medicationID)
-        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
-            let ids = requests.map(\.identifier).filter { id in prefixes.contains { id.hasPrefix($0) } }
-            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+        let center = UNUserNotificationCenter.current()
+        operations.submit { done in
+            center.getPendingNotificationRequests { requests in
+                let ids = requests.map(\.identifier).filter { id in prefixes.contains { id.hasPrefix($0) } }
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+                done()
+            }
         }
     }
 
     func scheduleFeedingReminder(schedule food: FoodSchedule, petName: String) {
+        operations.submit { done in
+            self.scheduleFeedingReminderLocked(schedule: food, petName: petName)
+            done()
+        }
+    }
+
+    private func scheduleFeedingReminderLocked(schedule food: FoodSchedule, petName: String) {
         guard ReminderCategory.feeding.isEnabled else { return }
         var date = Calendar.current.date(bySettingHour: food.timeMinutes / 60, minute: food.timeMinutes % 60, second: 0, of: Date()) ?? Date()
         if date < Date() { date = Calendar.current.date(byAdding: .day, value: 1, to: date) ?? date }
@@ -235,6 +391,13 @@ final class NotificationService {
     }
 
     func scheduleOneOff(id: String, title: String, body: String, fireDate: Date, species: PetSpecies? = nil) {
+        operations.submit { done in
+            self.scheduleOneOffLocked(id: id, title: title, body: body, fireDate: fireDate, species: species)
+            done()
+        }
+    }
+
+    private func scheduleOneOffLocked(id: String, title: String, body: String, fireDate: Date, species: PetSpecies? = nil) {
         guard fireDate > Date() else { return }
         if id.hasPrefix("appt-"), !ReminderCategory.appointments.isEnabled { return }
         if id.hasPrefix("ins-"), !ReminderCategory.insurance.isEnabled { return }
@@ -243,17 +406,37 @@ final class NotificationService {
     }
 
     func scheduleVaccinationReminder(_ vaccination: VaccinationRecord, petName: String) {
+        operations.submit { done in
+            self.scheduleVaccinationReminderLocked(vaccination, petName: petName)
+            done()
+        }
+    }
+
+    private func scheduleVaccinationReminderLocked(_ vaccination: VaccinationRecord, petName: String) {
         guard let exp = vaccination.expirationDate else { return }
         let fire = Calendar.current.date(byAdding: .day, value: -7, to: exp) ?? exp
         guard ReminderCategory.vaccinations.isEnabled else { return }
-        scheduleOneOff(id: "vax-\(vaccination.id.uuidString)", title: "Vaccination due soon",
+        scheduleOneOffLocked(id: "vax-\(vaccination.id.uuidString)", title: "Vaccination due soon",
                        body: "\(petName): \(vaccination.vaccineName) expires \(exp.formatted(date: .abbreviated, time: .omitted))", fireDate: fire,
                        species: vaccination.pet?.species)
     }
 
     func scheduleRefillReminder(medication: Medication, petName: String) {
+        operations.submit { done in
+            self.scheduleRefillReminderLocked(medication: medication, petName: petName)
+            done()
+        }
+    }
+
+    private func scheduleRefillReminderLocked(medication: Medication, petName: String) {
+        // Refill reminders belong to the Medications category
+        // (audit fix, 2026-11-09): without this guard, logging the
+        // final dose re-scheduled a refill reminder even when the
+        // user had switched the Medications category off — every
+        // other scheduling method already checks its category.
+        guard ReminderCategory.medications.isEnabled else { return }
         let fire = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
-        scheduleOneOff(id: Self.refillReminderID(medicationID: medication.id), title: "Refill reminder",
+        scheduleOneOffLocked(id: Self.refillReminderID(medicationID: medication.id), title: "Refill reminder",
                        body: "\(petName): \(medication.name) is running low (\(medication.remainingSupply) left)", fireDate: fire,
                        species: medication.pet?.species)
     }
@@ -273,34 +456,37 @@ final class NotificationService {
         }
     }
 
-    private let syncCoordinator = SyncCoordinator()
+    /// The single FIFO queue every notification-centre mutation
+    /// sequence runs on (2026-11-09 ordering fix).
+    private let operations = NotificationOperationQueue()
 
     /// THE centralized reminder synchronization entry point (v1.2.5):
     /// launch, foreground, Settings re-enable and pet restoration all
-    /// call this. Passes are serialized through the SyncCoordinator —
-    /// a pass submitted while another is in flight is coalesced and
-    /// runs after, never interleaved — so pending-request cleanup and
-    /// scheduling from two passes cannot fight. Medication dose
-    /// reminders (7-day horizon, per-medication preferences, global
-    /// setting, pending-limit budget) run first, then the one-off
-    /// types and refill reminders.
+    /// call this. The whole pass — category cleanup, medication
+    /// rebuild, one-off rebuild — runs as ONE operation on the FIFO
+    /// queue (2026-11-09; previously SyncCoordinator, whose
+    /// coalescing could drop a queued pass — the FIFO queue runs
+    /// every pass, in order, never interleaved with an editor's
+    /// cancel/schedule sequence or a cancelAll).
     func synchronizeReminders(pets: [Pet], schedules: [MedicationSchedule],
                               policies: [InsurancePolicy], remindersEnabled: Bool) {
-        // Category cleanup (2026-11-06): a category the user switched
-        // off loses its pending requests at the next sync, not just
-        // its future scheduling.
-        if remindersEnabled {
-            for category in ReminderCategory.allCases where !category.isEnabled {
-                cancelPending(withPrefixes: category.pendingPrefixes)
-            }
-        }
-        syncCoordinator.submit { done in
-            self.rescheduleAllMedicationReminders(pets: pets, schedules: schedules,
-                                                  remindersEnabled: remindersEnabled) {
-                if remindersEnabled {
-                    self.rebuildOneOffReminders(pets: pets, policies: policies) { done() }
-                } else {
-                    done()
+        operations.submit { done in
+            // Category cleanup (2026-11-06): a category the user
+            // switched off loses its pending requests at the next
+            // sync, not just its future scheduling. Runs INSIDE the
+            // pass operation so its snapshot cannot interleave with
+            // another operation's scheduling.
+            let disabled = remindersEnabled
+                ? ReminderCategory.allCases.filter { !$0.isEnabled }
+                : []
+            self.cancelPendingLocked(withPrefixes: disabled.flatMap(\.pendingPrefixes)) {
+                self.rescheduleAllMedicationRemindersLocked(pets: pets, schedules: schedules,
+                                                              remindersEnabled: remindersEnabled) {
+                    if remindersEnabled {
+                        self.rebuildOneOffReminders(pets: pets, policies: policies) { done() }
+                    } else {
+                        done()
+                    }
                 }
             }
         }
@@ -309,13 +495,13 @@ final class NotificationService {
     private func rebuildOneOffRemindersAuthorized(pets: [Pet], policies: [InsurancePolicy]) {
         for pet in pets where !pet.isArchived {
             for food in pet.foodSchedules where food.isActive {
-                scheduleFeedingReminder(schedule: food, petName: pet.name)
+                scheduleFeedingReminderLocked(schedule: food, petName: pet.name)
             }
             for vax in pet.vaccinations {
-                scheduleVaccinationReminder(vax, petName: pet.name)
+                scheduleVaccinationReminderLocked(vax, petName: pet.name)
             }
             for appt in pet.appointments where Self.shouldScheduleAppointmentReminder(appt) {
-                scheduleOneOff(id: "appt-\(appt.id.uuidString)",
+                scheduleOneOffLocked(id: "appt-\(appt.id.uuidString)",
                                title: "Vet appointment: \(pet.name)", body: appt.title,
                                fireDate: appt.date.addingTimeInterval(-3600), species: pet.species)
             }
@@ -323,7 +509,7 @@ final class NotificationService {
         for policy in Self.eligibleInsurancePolicies(policies: policies, pets: pets) {
             guard let renewal = policy.renewalDate else { continue }
             let fire = Calendar.current.date(byAdding: .day, value: -14, to: renewal) ?? renewal
-            scheduleOneOff(id: "ins-\(policy.id.uuidString)", title: "Insurance renewal soon",
+            scheduleOneOffLocked(id: "ins-\(policy.id.uuidString)", title: "Insurance renewal soon",
                            body: "\(policy.petName): \(policy.provider) renews soon", fireDate: fire,
                            species: pets.first(where: { $0.id == policy.petID })?.species)
         }
@@ -332,27 +518,56 @@ final class NotificationService {
         // its (deterministic-ID) refill reminder re-armed.
         for pet in pets where !pet.isArchived {
             for medication in pet.medications where medication.isActive && medication.needsRefill {
-                scheduleRefillReminder(medication: medication, petName: pet.name)
+                scheduleRefillReminderLocked(medication: medication, petName: pet.name)
             }
         }
     }
 
     func cancelAll() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        // Queued like every other mutation sequence (2026-11-09):
+        // a save whose cancellation snapshot is still in flight
+        // must have its schedule submitted BEFORE this removal, or
+        // the removal would be submitted first and the save's
+        // reminders would land after it and survive.
+        operations.submit { done in
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            done()
+        }
     }
 
     func cancel(ids: [String]) {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids.map { "pc360-\($0)" })
+        // Queued like every other mutation (final review fix,
+        // 2026-11-09): an editor's cancel-then-add pair now reaches
+        // the centre as two FIFO operations in call order, so the
+        // cancellation-before-add behavior is preserved by the
+        // queue itself rather than by same-call-stack timing.
+        operations.submit { done in
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids.map { "pc360-\($0)" })
+            done()
+        }
     }
 
     /// Cancels pending requests whose namespaced id starts with any
     /// of the given raw prefixes (e.g. "appt-"), used when a reminder
     /// category is switched off and by the sync's category cleanup.
     func cancelPending(withPrefixes prefixes: [String]) {
+        operations.submit { done in
+            self.cancelPendingLocked(withPrefixes: prefixes, completion: done)
+        }
+    }
+
+    /// The cancellation itself; callers must already hold the
+    /// operation queue (the public wrapper above, or a
+    /// synchronization pass). An empty prefix list completes
+    /// immediately without touching the centre.
+    private func cancelPendingLocked(withPrefixes prefixes: [String], completion: @escaping () -> Void) {
+        guard !prefixes.isEmpty else { completion(); return }
         let namespaced = prefixes.map { "pc360-\($0)" }
-        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
             let ids = requests.map(\.identifier).filter { id in namespaced.contains { id.hasPrefix($0) } }
-            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+            completion()
         }
     }
 
@@ -367,6 +582,9 @@ final class NotificationService {
         content.sound = soundName.map { UNNotificationSound(named: UNNotificationSoundName(rawValue: $0)) } ?? .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
         let request = UNNotificationRequest(identifier: "pc360-test-\(UUID().uuidString)", content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request)
+        operations.submit { done in
+            UNUserNotificationCenter.current().add(request)
+            done()
+        }
     }
 }

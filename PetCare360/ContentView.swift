@@ -75,7 +75,7 @@ struct ContentView: View {
         // foreground passes can never interleave.
         NotificationService.shared.synchronizeReminders(
             pets: allPets, schedules: allSchedules, policies: allPolicies,
-            remindersEnabled: profiles.first?.remindersEnabled ?? false)
+            remindersEnabled: profiles.first?.remindersEnabled ?? true)
     }
 }
 
