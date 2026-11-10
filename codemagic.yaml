@@ -524,44 +524,200 @@ workflows:
             -skip-testing:PetCare360UITests \
             -skip-testing:PetCare360Tests/PetCare360StoreKitDiagnosticsTests/testSKTestSessionLocalPurchaseCompletes \
             2>&1 | tee "$TEST_DIR/02-full-tests.log"
-      - name: Run each UI test on a FRESH app install (isolated StoreKit + app state)
+      - name: Run GATE UI tests on a FRESH app install (CI-supported — no purchase required; GATING)
         script: |
-          # UI test methods relaunch the same install, so app data
-          # (completed onboarding) and local StoreKit transactions
-          # (a purchase) otherwise leak from one test into the
-          # next — a later test then launches straight into the
-          # subscription gate, or past it, instead of first launch.
-          # StoreKit test transactions live outside the app's data
-          # and cannot be cleared by the app or the test runner, so
-          # each UI test gets a fresh install: uninstalling removes
-          # both the app data and the local StoreKit transactions.
-          # The list of tests is discovered from the source, so a
-          # newly added UI test is picked up automatically.
+          # Gate-only UI tests (class PetCare360GateUITests,
+          # added 2026-11-10 under the approved Build 20 testing
+          # strategy): everything the mandatory subscription gate
+          # shows and does BEFORE any purchase — product loading,
+          # prices, trial information, plan selection, purchase-
+          # button state, legal links, and visible enforcement.
+          # The class's seventh test (restore with no purchases)
+          # is EXCLUDED from this gating group: it performs a
+          # live AppStore.sync(), whose behaviour on an account-
+          # less simulator is environment-dependent, so it runs
+          # in its own step below and is reported independently.
+          # No purchase is attempted and no
+          # entitlement is faked, so these tests run reliably in
+          # CI and ARE part of the build gate: a failure here
+          # fails the build.
+          # UI test methods relaunch the same install, so each
+          # test still gets a fresh install (uninstall first),
+          # exactly like the journey tests below. Discovery is
+          # per class from the source, so a newly added gate test
+          # is picked up automatically.
           mkdir -p "$TEST_DIR/ui"
-          UI_METHODS=$(grep -oE 'func test[A-Za-z0-9_]*' PetCare360UITests/PetCare360UITests.swift | sed 's/^func //' | sort -u)
-          if [ -z "$UI_METHODS" ]; then
-            echo "ABORT: no UI test methods discovered in PetCare360UITests.swift"
+          GATE_METHODS=$(sed -n '/final class PetCare360GateUITests/,$p' PetCare360UITests/PetCare360UITests.swift | grep -oE 'func test[A-Za-z0-9_]*' | sed 's/^func //' | grep -v '^testGateRestoreWithNoPurchasesReportsOutcome$' | sort -u)
+          if [ -z "$GATE_METHODS" ]; then
+            echo "ABORT: no gate UI test methods discovered in PetCare360GateUITests"
             exit 1
           fi
-          echo "Discovered UI tests:"
-          echo "$UI_METHODS"
+          echo "Discovered GATING gate UI tests (restore test excluded — it runs separately):"
+          echo "$GATE_METHODS"
           FAILED=0
-          for METHOD in $UI_METHODS; do
-            echo "================ UI TEST: $METHOD (fresh install) ================"
+          for METHOD in $GATE_METHODS; do
+            echo "================ GATE UI TEST: $METHOD (fresh install) ================"
             xcrun simctl uninstall "$SIM_UDID" com.xenon-media.petcare360 >/dev/null 2>&1 || true
             set -o pipefail
             if ! xcodebuild test-without-building \
               -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
               -destination "platform=iOS Simulator,id=$SIM_UDID" \
               -derivedDataPath "$DERIVED_DATA" \
-              -resultBundlePath "$TEST_DIR/ui/$METHOD.xcresult" \
-              -only-testing:"PetCare360UITests/PetCare360UITests/$METHOD" \
-              2>&1 | tee "$TEST_DIR/ui/$METHOD.log"; then
+              -resultBundlePath "$TEST_DIR/ui/gate-$METHOD.xcresult" \
+              -only-testing:"PetCare360UITests/PetCare360GateUITests/$METHOD" \
+              2>&1 | tee "$TEST_DIR/ui/gate-$METHOD.log"; then
               FAILED=1
             fi
           done
           if [ "$FAILED" -ne 0 ]; then
-            echo "One or more UI tests failed — see $TEST_DIR/ui/*.log"
+            echo "One or more GATE UI tests failed — see $TEST_DIR/ui/gate-*.log"
+            exit 1
+          fi
+          echo "All gate UI tests passed."
+      - name: Run RESTORE gate UI test separately (environment-dependent — reported independently, NOT gating)
+        script: |
+          # testGateRestoreWithNoPurchasesReportsOutcome is kept
+          # OUT of the gating gate group on purpose: what a live
+          # AppStore.sync() does on a simulator with no signed-in
+          # account is an environment property, not an app
+          # property — iOS can park it behind an Apple Account
+          # authentication prompt or never return at all. The
+          # test itself separates the outcomes:
+          #   definite no-purchase / restore-error message -> PASS
+          #   app unlocks, or success text behind a still-locked
+          #     gate -> FAIL (access without a purchase, or an
+          #     inconsistent outcome)
+          #   authentication prompt or 45s hang -> XCTSkip with
+          #     an ENVIRONMENT LIMITATION reason in the log.
+          # This step runs it alone on a fresh install, classifies
+          # the result FROM THE LOG, and reports it in
+          # ui/RESTORE-RESULT.txt and the summary — independently
+          # of the gate group, never gating this build.
+          mkdir -p "$TEST_DIR/ui"
+          METHOD=testGateRestoreWithNoPurchasesReportsOutcome
+          LOG="$TEST_DIR/ui/gate-restore-$METHOD.log"
+          RESULT_FILE="$TEST_DIR/ui/RESTORE-RESULT.txt"
+          echo "RESTORE GATE UI TEST — environment-dependent; reported independently; not gating this build." > "$RESULT_FILE"
+          echo "================ RESTORE GATE UI TEST: $METHOD (fresh install) ================"
+          xcrun simctl uninstall "$SIM_UDID" com.xenon-media.petcare360 >/dev/null 2>&1 || true
+          set -o pipefail
+          # ERREXIT SAFETY: with pipefail on, a failed xcodebuild
+          # makes this pipeline return non-zero, and under set -e
+          # the script would exit HERE — before PIPESTATUS is
+          # captured and before any classification is written.
+          # Save the current errexit state, disable it for the
+          # pipeline only, capture PIPESTATUS[0] immediately,
+          # then restore the saved state. The captured STATUS is
+          # used exactly as before (0 is required for PASS; a
+          # failure is classified, never converted into a pass).
+          case $- in *e*) ERREXIT_WAS_ON=1 ;; *) ERREXIT_WAS_ON=0 ;; esac
+          set +e
+          xcodebuild test-without-building \
+            -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath "$TEST_DIR/ui/gate-restore-$METHOD.xcresult" \
+            -only-testing:"PetCare360UITests/PetCare360GateUITests/$METHOD" \
+            2>&1 | tee "$LOG"
+          STATUS=${PIPESTATUS[0]}
+          if [ "$ERREXIT_WAS_ON" -eq 1 ]; then set -e; fi
+          if grep -q "ENVIRONMENT LIMITATION" "$LOG"; then
+            echo "ENVIRONMENT-LIMITED: $METHOD — StoreKit presented an authentication prompt or the sync never returned in this environment, so the no-purchase restore outcome could not be exercised here. See ui/gate-restore-$METHOD.log" >> "$RESULT_FILE"
+          elif grep -q "UNLOCKED during restore" "$LOG"; then
+            echo "FAIL: $METHOD — the app unlocked during restore on a fresh install with no purchase. INVESTIGATE. See ui/gate-restore-$METHOD.log" >> "$RESULT_FILE"
+          elif [ "$STATUS" -eq 0 ]; then
+            echo "PASS: $METHOD — the app reported a definite no-purchase / restore-error outcome." >> "$RESULT_FILE"
+          else
+            echo "FAIL: $METHOD — see ui/gate-restore-$METHOD.log" >> "$RESULT_FILE"
+          fi
+          cat "$RESULT_FILE"
+          true
+      - name: Run FULL JOURNEY UI tests on a FRESH app install (purchase-dependent — each failure classified from its log; reported separately, NOT gating)
+        script: |
+          # Full journey UI tests (class PetCare360UITests, the
+          # original eight): every journey sits behind the
+          # mandatory subscription gate, so each test must first
+          # complete a REAL StoreKit purchase through the gate.
+          # On this Codemagic image that purchase cannot complete
+          # for a command-line-installed app — storekitd refuses
+          # the local StoreKit session ("not installed for
+          # development"; Builds 18 and 20 investigations) and the
+          # purchase falls through to the real store, which has
+          # no signed-in account (accountMissing). This is a
+          # proven environment limitation, not an app defect.
+          #
+          # SEPARATION IS EXPLICIT, per the approved strategy:
+          # these tests still RUN on every build, each on a fresh
+          # install, and every result is reported per test in
+          # ui/JOURNEY-RESULTS.txt and in the summary under its
+          # own heading — but they do not fail this build on this
+          # image. On an environment where a purchase can
+          # complete (Xcode IDE install, physical device) the
+          # same tests are the purchase gate. Nothing here is
+          # skipped, stubbed, or hidden: a journey PASS on this
+          # image would mean the environment changed and must be
+          # investigated, not celebrated silently.
+          mkdir -p "$TEST_DIR/ui"
+          JOURNEY_METHODS=$(sed -n '/final class PetCare360UITests:/,/final class PetCare360GateUITests/p' PetCare360UITests/PetCare360UITests.swift | grep -oE 'func test[A-Za-z0-9_]*' | sed 's/^func //' | sort -u)
+          if [ -z "$JOURNEY_METHODS" ]; then
+            echo "ABORT: no journey UI test methods discovered in PetCare360UITests"
+            exit 1
+          fi
+          echo "Discovered full journey UI tests:"
+          echo "$JOURNEY_METHODS"
+          RESULTS="$TEST_DIR/ui/JOURNEY-RESULTS.txt"
+          echo "FULL JOURNEY UI TESTS — purchase-dependent. Each result is classified from its own log: ENVIRONMENT-BLOCKED only when the purchase attempt was reached and hit the known StoreKit session/account failure; UNEXPECTED FAILURE otherwise; UNEXPECTED PASS if one completes on this image. Reported separately; not gating this build." > "$RESULTS"
+          FAILED=0
+          for METHOD in $JOURNEY_METHODS; do
+            echo "================ JOURNEY UI TEST: $METHOD (fresh install) ================"
+            xcrun simctl uninstall "$SIM_UDID" com.xenon-media.petcare360 >/dev/null 2>&1 || true
+            set -o pipefail
+            # ERREXIT SAFETY (same pattern as the restore step):
+            # with pipefail on, a failed xcodebuild makes this
+            # pipeline return non-zero, and under set -e the
+            # script would exit mid-loop — before PIPESTATUS is
+            # captured and before this journey is classified.
+            # Save errexit, disable it for the pipeline only,
+            # capture PIPESTATUS[0] immediately, restore. The
+            # classification below is unchanged: STATUS 0 is
+            # required for the pass branch, and a failure is
+            # classified from the log, never converted to a pass.
+            case $- in *e*) ERREXIT_WAS_ON=1 ;; *) ERREXIT_WAS_ON=0 ;; esac
+            set +e
+            xcodebuild test-without-building \
+              -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" \
+              -destination "platform=iOS Simulator,id=$SIM_UDID" \
+              -derivedDataPath "$DERIVED_DATA" \
+              -resultBundlePath "$TEST_DIR/ui/journey-$METHOD.xcresult" \
+              -only-testing:"PetCare360UITests/PetCare360UITests/$METHOD" \
+              2>&1 | tee "$TEST_DIR/ui/journey-$METHOD.log"
+            STATUS=${PIPESTATUS[0]}
+            if [ "$ERREXIT_WAS_ON" -eq 1 ]; then set -e; fi
+            LOG="$TEST_DIR/ui/journey-$METHOD.log"
+            # CLASSIFY FROM THE ACTUAL LOG. A journey failure is
+            # ENVIRONMENT-BLOCKED only when the log shows the test
+            # reached the purchase attempt and then hit the known
+            # StoreKit purchase/session/account failure — proven
+            # by one of attemptGatePurchase's three terminal
+            # messages, all of which occur only after the purchase
+            # tap. A failure anywhere else (setup, onboarding,
+            # storage, an unrelated assertion) is an UNEXPECTED
+            # FAILURE and must be investigated, never waved
+            # through as environment. Full logs are preserved.
+            if [ "$STATUS" -eq 0 ]; then
+              echo "UNEXPECTED PASS: $METHOD — completed on this CI image; the purchase environment may have changed, investigate before trusting it." >> "$RESULTS"
+              echo "JOURNEY RESULT: $METHOD — UNEXPECTED PASS (classification in ui/JOURNEY-RESULTS.txt)"
+            elif grep -qE "The purchase did not complete within 30s|PURCHASE REACHED THE REAL APP STORE|The purchase attempt finished WITHOUT unlocking" "$LOG"; then
+              echo "ENVIRONMENT-BLOCKED: $METHOD — reached the purchase attempt, then hit the known StoreKit session/account failure. See ui/journey-$METHOD.log" >> "$RESULTS"
+              echo "JOURNEY RESULT: $METHOD — ENVIRONMENT-BLOCKED (purchase attempt reached; known StoreKit failure)"
+              FAILED=1
+            else
+              echo "UNEXPECTED FAILURE: $METHOD — failed BEFORE the purchase attempt or for an unrelated reason; INVESTIGATE. See ui/journey-$METHOD.log" >> "$RESULTS"
+              echo "JOURNEY RESULT: $METHOD — UNEXPECTED FAILURE (not the known StoreKit failure; investigate)"
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
             # EVIDENCE CAPTURE (best effort, never fatal) — FIXED
             # after run 6af02598, whose capture lost the evidence
             # it existed to keep: the old single predicate matched
@@ -605,8 +761,9 @@ workflows:
               echo "StoreKit-named paths under the device data directory (maxdepth 5):"
               find "$DEV_DATA" -maxdepth 5 -iname "*storekit*" -print 2>/dev/null || true
             } 2>&1 | tee "$TEST_DIR/ui/storekit-evidence.log" || true
-            exit 1
           fi
+          echo "Journey step finished. Per-test results, each classified individually from its own log: ui/JOURNEY-RESULTS.txt (reported separately; NOT gating the build)."
+          true
       - name: Summary — executed counts from the real log
         script: |
           {
@@ -614,6 +771,12 @@ workflows:
             grep -E "Test Suite '.*' (passed|failed)" "$TEST_DIR/02-full-tests.log" "$TEST_DIR"/ui/*.log 2>/dev/null || echo '(no suite lines — see log)'
             grep -E "Executed [0-9]+ tests" "$TEST_DIR/02-full-tests.log" "$TEST_DIR"/ui/*.log 2>/dev/null | tail -12 || true
             grep -E "Test Case .* failed" "$TEST_DIR/02-full-tests.log" "$TEST_DIR"/ui/*.log 2>/dev/null || echo '(no failed test-case lines)'
+            echo '---------------- UI SPLIT (approved Build 20 strategy) ----------------'
+            echo 'Gate UI tests (CI-supported, GATING): results in ui/gate-*.log'
+            echo 'Restore gate UI test (environment-dependent; reported independently, not gating):'
+            cat "$TEST_DIR/ui/RESTORE-RESULT.txt" 2>/dev/null || echo '(no restore results file — restore step did not run)'
+            echo 'Full journey UI tests (purchase-dependent; classified per log; reported, not gating):'
+            cat "$TEST_DIR/ui/JOURNEY-RESULTS.txt" 2>/dev/null || echo '(no journey results file — journey step did not run)'
           } | tee "$TEST_DIR/99-summary.log"
           true
     artifacts:

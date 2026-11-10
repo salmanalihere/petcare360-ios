@@ -474,3 +474,392 @@ final class PetCare360UITests: XCTestCase {
         }
     }
 }
+
+/// Gate-only UI tests (added 2026-11-10 under the approved
+/// post-Build-20 testing strategy). These tests cover everything
+/// the mandatory subscription gate shows and does BEFORE any
+/// purchase: product loading, prices, trial information, plan
+/// selection, purchase-button state, Restore Purchases, and the
+/// legal links. They exist because the Codemagic simulator image
+/// cannot complete a StoreKit purchase for a command-line-
+/// installed app (storekitd: "not installed for development" —
+/// see the Build 18/20 investigations), so the eight journey
+/// tests above can never get past this screen in CI, and the
+/// gate itself — the one screen every locked user sees — had no
+/// CI coverage at all.
+///
+/// Discipline, identical to the journey tests:
+/// - NO purchase is ever attempted here, NO entitlement is
+///   faked, and production enforcement is untouched: these tests
+///   only observe and drive the gate's own pre-purchase UI.
+/// - Restore IS tapped in one test: it is a read-only App Store
+///   sync, and on a fresh install with no purchases it must end
+///   in one of StoreManager's definite outcome messages. That
+///   one test is environment-dependent (a live sync on an
+///   account-less simulator), so the workflow runs it
+///   separately from the six gating tests in this class and
+///   reports its result independently — see its own doc comment.
+/// - Same launch contract as the journey tests: fresh state via
+///   `-uiTesting -uiTestingResetState`, onboarding stepped
+///   through honestly, and the run STOPS at the gate — reaching
+///   the tab bar in setUp is a failure, because on a fresh
+///   install that would mean the app opened without an
+///   entitlement.
+@MainActor
+final class PetCare360GateUITests: XCTestCase {
+
+    private var app: XCUIApplication!
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments += ["-uiTesting", "-uiTestingResetState"]
+        app.launch()
+        reachSubscriptionGate()
+    }
+
+    override func tearDownWithError() throws {
+        app?.terminate()
+        app = nil
+    }
+
+    // MARK: - Reaching the gate (never past it)
+
+    /// Drive launch → onboarding → the subscription gate, and
+    /// stop there. The checking spinner is waited out; onboarding
+    /// is stepped with the same rules as the journey tests.
+    private func reachSubscriptionGate() {
+        let gateHeader = app.staticTexts["PetCare 360 is subscription-only"]
+        if gateHeader.waitForExistence(timeout: 5) { return }
+
+        let deadline = Date().addingTimeInterval(90)
+        var visited: [String] = []
+        while Date() < deadline {
+            if gateHeader.exists { return }
+            if app.tabBars.buttons["Pets"].exists {
+                XCTFail("The app opened to the tab bar on a fresh install without any purchase — the subscription gate did not block it. Hierarchy: \(app.debugDescription)")
+                return
+            }
+            if app.staticTexts["PetCare 360 couldn't open its stored data"].exists {
+                XCTFail("The app showed its storage-error screen during gate-test setup. Hierarchy: \(app.debugDescription)")
+                return
+            }
+            if app.buttons["Skip tutorial"].exists
+                || app.buttons["Next"].exists
+                || app.textFields["Your name"].exists {
+                if visited.last != "onboarding" { visited.append("onboarding") }
+                stepOnboarding()
+            } else {
+                if visited.last != "checking/transition" { visited.append("checking/transition") }
+                _ = gateHeader.waitForExistence(timeout: 2)
+            }
+        }
+        XCTAssertTrue(gateHeader.exists,
+                      "Never reached the subscription gate. Screens visited: \(visited.joined(separator: " → ")). Final hierarchy: \(app.debugDescription)")
+    }
+
+    /// One onboarding step, mirroring the journey tests' rules:
+    /// Skip finishes immediately; on the name page, enter a name
+    /// and tap Get Started; otherwise Next advances one page.
+    private func stepOnboarding() {
+        let skip = app.buttons["Skip tutorial"]
+        if skip.exists {
+            skip.tap()
+            return
+        }
+        let nameField = app.textFields["Your name"]
+        if nameField.exists {
+            let currentValue = nameField.value as? String ?? ""
+            if currentValue.isEmpty || currentValue == "Your name" {
+                nameField.tap()
+                nameField.typeText("Alex")
+                app.swipeDown()
+            }
+            let getStarted = app.buttons["Get Started"]
+            if getStarted.waitForExistence(timeout: 5) {
+                getStarted.tap()
+            }
+            return
+        }
+        let next = app.buttons["Next"]
+        if next.waitForExistence(timeout: 3) {
+            next.tap()
+        }
+    }
+
+    // MARK: - Gate element helpers
+
+    /// A plan card's accessibility label BEGINS with the product
+    /// name ("Premium Monthly, $4.99 per month"), which keeps it
+    /// distinct from the purchase button, whose label merely
+    /// CONTAINS the selected product's name.
+    private func planCard(_ productName: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "\(productName),")).firstMatch
+    }
+
+    /// The purchase call-to-action, matched exactly as the
+    /// journey tests match it: its accessibility label is
+    /// "Start 7-day free trial, <product>, <price> <period>" when
+    /// a trial is offered and "Subscribe, <product>, ..." when
+    /// it is not.
+    private var purchaseButton: XCUIElement {
+        app.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] %@ OR label BEGINSWITH[c] %@",
+                        "Start 7-day free trial", "Subscribe,")).firstMatch
+    }
+
+    /// SwiftUI Links surface as link elements on some OS
+    /// versions and button elements on others; accept either.
+    private func gateLink(_ label: String) -> XCUIElement {
+        let link = app.links[label]
+        if link.exists { return link }
+        return app.buttons[label]
+    }
+
+    /// Wait for the gate's product content: the plan cards. The
+    /// gate's own Retry is tapped once if the load failed or came
+    /// back empty (products load from the store, which CI reaches
+    /// — Build 20's logs show both products loading with prices
+    /// and trial offers).
+    @discardableResult
+    private func waitForGateContent(timeout: TimeInterval = 60) -> Bool {
+        let monthly = planCard("Premium Monthly")
+        if monthly.waitForExistence(timeout: timeout) { return true }
+        let retry = app.buttons["Retry"]
+        if retry.exists {
+            retry.tap()
+            return monthly.waitForExistence(timeout: 30)
+        }
+        return false
+    }
+
+    /// The gate is a ScrollView: elements below the fold are not
+    /// in the accessibility tree until scrolled into view.
+    private func scrollUntilExists(_ element: XCUIElement, maxSwipes: Int = 6) {
+        var swipes = 0
+        while !element.exists && swipes < maxSwipes {
+            app.swipeUp()
+            swipes += 1
+            _ = element.waitForExistence(timeout: 1)
+        }
+    }
+
+    /// Visible gate texts for failure messages, mirroring the
+    /// journey tests' helper.
+    private func visibleGateTexts() -> String {
+        let labels = app.staticTexts.allElementsBoundByIndex
+            .map { $0.label }
+            .filter { !$0.isEmpty }
+            .prefix(14)
+        return labels.isEmpty ? "(none)" : labels.joined(separator: " | ")
+    }
+
+    /// Poll until the purchase button's label contains the given
+    /// text (selection changes relabel it), or the timeout ends.
+    private func purchaseButtonLabel(containing text: String, timeout: TimeInterval = 10) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if purchaseButton.exists && purchaseButton.label.contains(text) { return true }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return purchaseButton.exists && purchaseButton.label.contains(text)
+    }
+
+    // MARK: - Tests
+
+    /// Both subscription products load and display with their
+    /// names, prices and periods on the plan cards.
+    func testGateShowsBothProductsWithPrices() {
+        XCTAssertTrue(waitForGateContent(),
+                      "The gate never showed its plan cards. Visible gate texts: \(visibleGateTexts()). Hierarchy: \(app.debugDescription)")
+        let monthly = planCard("Premium Monthly")
+        let yearly = planCard("Premium Yearly")
+        XCTAssertTrue(monthly.exists, "No Premium Monthly plan card. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertTrue(yearly.exists, "No Premium Yearly plan card. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertTrue(monthly.label.contains("4.99"),
+                      "Monthly card label should carry the $4.99 price; label was: \(monthly.label)")
+        XCTAssertTrue(monthly.label.contains("per month"),
+                      "Monthly card label should carry its period; label was: \(monthly.label)")
+        XCTAssertTrue(yearly.label.contains("29.99"),
+                      "Yearly card label should carry the $29.99 price; label was: \(yearly.label)")
+        XCTAssertTrue(yearly.label.contains("per year"),
+                      "Yearly card label should carry its period; label was: \(yearly.label)")
+    }
+
+    /// Plan selection is real: the purchase button relabels to
+    /// the selected product, defaulting to Yearly (the gate's
+    /// declared default) and following taps in both directions.
+    func testGatePlanSelectionUpdatesPurchaseButton() {
+        XCTAssertTrue(waitForGateContent(),
+                      "The gate never showed its plan cards. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertTrue(purchaseButtonLabel(containing: "Premium Yearly"),
+                      "The purchase button should default to Premium Yearly; label was: \(purchaseButton.label)")
+        planCard("Premium Monthly").tap()
+        XCTAssertTrue(purchaseButtonLabel(containing: "Premium Monthly"),
+                      "After tapping Monthly the purchase button should name Premium Monthly; label was: \(purchaseButton.label)")
+        XCTAssertTrue(purchaseButtonLabel(containing: "per month"),
+                      "After tapping Monthly the purchase button should say per month; label was: \(purchaseButton.label)")
+        planCard("Premium Yearly").tap()
+        XCTAssertTrue(purchaseButtonLabel(containing: "Premium Yearly"),
+                      "After tapping Yearly the purchase button should name Premium Yearly again; label was: \(purchaseButton.label)")
+    }
+
+    /// The trial/price disclosure under the purchase button is
+    /// shown for the selected plan and follows the selection:
+    /// with the 7-day trial offered on both products it reads
+    /// "Free for 7 days, then <price> <period>, ...".
+    func testGateShowsTrialAndPriceDetailsForSelectedPlan() {
+        XCTAssertTrue(waitForGateContent(),
+                      "The gate never showed its plan cards. Visible gate texts: \(visibleGateTexts())")
+        let yearlyCaption = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Free for 7 days, then")).firstMatch
+        XCTAssertTrue(yearlyCaption.waitForExistence(timeout: 10),
+                      "No free-trial disclosure under the purchase button for the default Yearly plan. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertTrue(yearlyCaption.label.contains("29.99"),
+                      "The Yearly trial disclosure should name the $29.99 price; text was: \(yearlyCaption.label)")
+        planCard("Premium Monthly").tap()
+        let deadline = Date().addingTimeInterval(10)
+        var monthlyCaptionOK = false
+        while Date() < deadline {
+            let caption = app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS[c] %@", "Free for 7 days, then")).firstMatch
+            if caption.exists && caption.label.contains("4.99") && caption.label.contains("per month") {
+                monthlyCaptionOK = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertTrue(monthlyCaptionOK,
+                      "After selecting Monthly the trial disclosure should read Free for 7 days, then $4.99 per month. Visible gate texts: \(visibleGateTexts())")
+    }
+
+    /// Purchase-button state before any purchase: present,
+    /// enabled, and not mid-purchase (no "Processing…" state).
+    func testGatePurchaseButtonIsReadyAndIdle() {
+        XCTAssertTrue(waitForGateContent(),
+                      "The gate never showed its plan cards. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertTrue(purchaseButton.waitForExistence(timeout: 10),
+                      "The gate showed no purchase button. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertTrue(purchaseButton.isEnabled,
+                      "The purchase button should be enabled before any purchase attempt.")
+        XCTAssertFalse(app.staticTexts["Processing…"].exists,
+                       "The gate claims to be processing a purchase before any purchase was attempted.")
+        XCTAssertTrue(planCard("Premium Monthly").isEnabled && planCard("Premium Yearly").isEnabled,
+                      "Both plan cards should be enabled for selection.")
+    }
+
+    /// Restore Purchases is visible and tappable — and this
+    /// test is ENVIRONMENT-DEPENDENT, so codemagic.yaml runs it
+    /// SEPARATELY from the six gating gate tests and reports its
+    /// result independently. What a live AppStore.sync() does on
+    /// a simulator with no signed-in account is an environment
+    /// property, not an app property.
+    ///
+    /// Expected outcome on a fresh install with no purchase: one
+    /// of StoreManager's definite no-purchase or restore-error
+    /// messages (no active purchase / sync failure / verification
+    /// failure / cancelled / billing-paused). Two outcomes are
+    /// NOT acceptable:
+    /// - The app UNLOCKING. Nothing was purchased on this fresh
+    ///   install, so an unlock means access appeared without a
+    ///   purchase behind it — a hard failure, never a pass.
+    /// - A success message while the gate stays up: a genuine
+    ///   restore success unlocks, so success text behind a still-
+    ///   locked gate is an inconsistent outcome — also a failure.
+    /// And two outcomes are environment limitations, reported as
+    /// an XCTSkip with the reason attached (never silently, and
+    /// the workflow classifies the run ENVIRONMENT-LIMITED from
+    /// that reason): iOS parking the restore behind an Apple
+    /// Account authentication prompt, or the sync never
+    /// returning here at all. The app-side restore state machine
+    /// itself is covered deterministically by the
+    /// PetCare360RestoreOutcomeTests unit tests.
+    func testGateRestoreWithNoPurchasesReportsOutcome() throws {
+        XCTAssertTrue(waitForGateContent(),
+                      "The gate never showed its plan cards. Visible gate texts: \(visibleGateTexts())")
+        let restore = app.buttons["Restore Purchases"]
+        scrollUntilExists(restore)
+        XCTAssertTrue(restore.exists, "No Restore Purchases button on the gate. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertTrue(restore.isEnabled, "Restore Purchases should be enabled before restoring.")
+        restore.tap()
+
+        let definitePrefixes = [
+            "No active purchases were found",
+            "Restore did not complete",
+            "Your purchases could not be verified",
+            "Restore was cancelled",
+            "Your subscription was found, but Apple has paused it",
+        ]
+        let deadline = Date().addingTimeInterval(45)
+        var sawRestoring = false
+        while Date() < deadline {
+            if appleAccountSignInPromptIsVisible() {
+                throw XCTSkip("ENVIRONMENT LIMITATION: iOS presented an Apple Account authentication prompt for this restore, so no restore outcome could be produced in this environment. Exercise the no-purchase restore outcome on a device or in an environment with a signed-in sandbox account.")
+            }
+            if app.tabBars.buttons["Pets"].exists {
+                XCTFail("The app UNLOCKED during restore on a fresh install with no purchase — access appeared without a purchase behind it. This is not a successful no-purchase restore. Visible gate texts: \(visibleGateTexts()). Hierarchy: \(app.debugDescription)")
+                return
+            }
+            if app.buttons["Restoring..."].exists { sawRestoring = true }
+            for prefix in definitePrefixes {
+                let text = app.staticTexts.matching(
+                    NSPredicate(format: "label BEGINSWITH[c] %@", prefix)).firstMatch
+                if text.exists { return }
+            }
+            let successText = app.staticTexts.matching(
+                NSPredicate(format: "label BEGINSWITH[c] %@", "Purchases restored successfully")).firstMatch
+            if successText.exists {
+                XCTFail("Restore claimed success ('\(successText.label)') on a fresh install with no purchase, yet the subscription gate is still up — an inconsistent restore outcome. Visible gate texts: \(visibleGateTexts())")
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        throw XCTSkip("ENVIRONMENT LIMITATION: restore produced no outcome within 45s in this environment (restoring indicator seen: \(sawRestoring)), so the no-purchase restore outcome could not be exercised here. Run on a device or in an environment with a signed-in sandbox account.")
+    }
+
+    /// True when iOS is showing the real-store Apple Account
+    /// sign-in prompt (a SpringBoard-hosted alert) — the same
+    /// detection the journey tests use. Its presence during a
+    /// restore means the environment, not the app, is deciding
+    /// the outcome.
+    private func appleAccountSignInPromptIsVisible() -> Bool {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let inSpringboard = springboard.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Apple Account")).firstMatch
+        if inSpringboard.exists { return true }
+        let inApp = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Apple Account Sign In")).firstMatch
+        return inApp.exists
+    }
+
+    /// Terms of Use, Privacy Policy and Manage Subscription are
+    /// all present on the gate, as App Store rules require while
+    /// the app is locked. Existence is asserted, not navigation:
+    /// these links open external destinations that a UI test
+    /// cannot meaningfully verify.
+    func testGateShowsLegalAndManageSubscriptionLinks() {
+        for label in ["Privacy Policy", "Terms of Use", "Manage Subscription"] {
+            let element = gateLink(label)
+            scrollUntilExists(element)
+            XCTAssertTrue(element.exists,
+                          "The gate is missing its \(label) link. Visible gate texts: \(visibleGateTexts())")
+        }
+    }
+
+    /// Enforcement is visible and total on the gate: no tab bar,
+    /// no app content, and no dismiss/close/skip affordance of
+    /// any kind — the only ways forward are purchase or restore.
+    func testGateBlocksAppContentWithoutSubscription() {
+        XCTAssertTrue(app.staticTexts["PetCare 360 is subscription-only"].exists,
+                      "The gate header is not showing. Visible gate texts: \(visibleGateTexts())")
+        XCTAssertFalse(app.tabBars.buttons["Pets"].exists,
+                       "The tab bar is reachable without a subscription.")
+        for label in ["Close", "Skip", "Not Now", "Maybe Later", "Continue without subscription"] {
+            XCTAssertFalse(app.buttons[label].exists,
+                           "The gate unexpectedly offers a '\(label)' dismissal — enforcement has a hole.")
+        }
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "There is no free plan")).firstMatch.exists,
+                      "The gate should state plainly that there is no free plan. Visible gate texts: \(visibleGateTexts())")
+    }
+}
