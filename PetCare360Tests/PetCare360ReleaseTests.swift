@@ -13,8 +13,14 @@ final class PetCare360ReleaseTests: XCTestCase {
         XCTAssertEqual(AppConfig.bundleID, "com.xenon-media.petcare360")
     }
 
-    func testCloudKitConfigurationRestored() {
-        XCTAssertTrue(AppConfig.cloudKitSyncEnabled)
+    // Local-only initial release (owner decision 2026-11-11):
+    // CloudKit sync is DISABLED. It was enabled from 2026-11-06,
+    // but the current schema cannot pass CloudKit validation, so
+    // sync never functioned; the app launches on its local store
+    // only. The container ID stays pinned — it is retained in the
+    // configuration for a future version.
+    func testCloudKitDisabledForLocalOnlyRelease() {
+        XCTAssertFalse(AppConfig.cloudKitSyncEnabled)
         XCTAssertEqual(AppConfig.iCloudContainerID, "iCloud.com.xenon-media.petcare360")
     }
 

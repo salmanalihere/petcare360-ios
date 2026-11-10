@@ -99,13 +99,16 @@ final class PetCare360V123Tests: XCTestCase {
     }
 
     // Updated 2026-11-07 (owner review): this test asserted the
-    // v1.2.3-era disabled state. The owner has since completed the
+    // v1.2.3-era disabled state. The owner had since completed the
     // Developer setup and approved CloudKit ON (2026-11-06), so the
-    // test now pins the approved configuration instead — same
-    // strength, current truth.
-    func testCloudKitRemainsEnabledAsApproved() {
-        XCTAssertTrue(AppConfig.cloudKitSyncEnabled,
-                      "CloudKit stays enabled per the owner's approved configuration")
+    // test pinned the enabled configuration. Updated again
+    // 2026-11-11: the owner decided the initial release is
+    // local-only (the schema cannot pass CloudKit validation, so
+    // sync never functioned), so the test now pins the disabled
+    // configuration instead — same strength, current truth.
+    func testCloudKitRemainsDisabledAsApproved() {
+        XCTAssertFalse(AppConfig.cloudKitSyncEnabled,
+                       "CloudKit stays disabled for the local-only initial release per the owner's approved configuration")
         XCTAssertEqual(AppConfig.iCloudContainerID, "iCloud.com.xenon-media.petcare360")
     }
 }

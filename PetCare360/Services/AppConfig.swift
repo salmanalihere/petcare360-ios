@@ -9,14 +9,21 @@ enum AppConfig {
     /// The existing iCloud container of the registered App Store
     /// Connect application (owner-confirmed 2026-11-06).
     static let iCloudContainerID = "iCloud.com.xenon-media.petcare360"
-    /// CloudKit sync is ACTIVE (restored 2026-11-06 at the owner's
-    /// instruction, matching the registered app). It was disabled in
-    /// v1.2.2 because the Developer-portal setup could not be verified
-    /// from the build environment at that time. If the container
-    /// cannot be opened (missing capability/profile), PetCare360App
-    /// falls back to the local store and then to its storage-error
-    /// screen — it never crashes or deletes data.
-    static let cloudKitSyncEnabled = true
+    /// CloudKit sync is DISABLED for the initial release (owner
+    /// decision 2026-11-11): PetCare 360 launches as a local-only
+    /// app. It was active from 2026-11-06, but the current schema
+    /// cannot pass CloudKit validation (its to-many relationships
+    /// are non-optional), so the CloudKit store never opened and
+    /// the app has always run on its local store in practice. With
+    /// this flag off, PetCare360App skips the CloudKit attempt
+    /// entirely and opens the existing local configuration
+    /// (`cloudKitDatabase: .none`) directly — same store location,
+    /// no migration, existing data untouched. The container ID
+    /// above is retained for a future version, when sync will be
+    /// reconsidered together with the schema changes it requires.
+    /// The local fallback ladder and storage-error screen remain
+    /// in place unchanged.
+    static let cloudKitSyncEnabled = false
     // Legal + support details supplied by the owner on 2026-11-05.
     // NOTE: the live pages could not be fetched from the build environment
     // (the page fetcher failed and neither host is search-indexed), so the

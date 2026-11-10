@@ -81,12 +81,17 @@ final class PetCare360V122Tests: XCTestCase {
     // "until the owner completes the Developer setup" (v1.2.2 era).
     // The owner completed that setup and directed CloudKit ON on
     // 2026-11-06 (registered container, entitlements wired, shipped
-    // in build 14). The test now pins the APPROVED configuration at
-    // the same strength — it fails if the flag, the container, or
-    // the explicit local fallback ever drifts.
-    func testCloudKitMatchesApprovedConfiguration() {
-        XCTAssertTrue(AppConfig.cloudKitSyncEnabled,
-                      "CloudKit sync is enabled per the owner's 2026-11-06 decision")
+    // in build 14), and the test pinned that configuration. The
+    // owner has now decided (2026-11-11) that the initial release
+    // is local-only — the schema cannot pass CloudKit validation,
+    // so sync never functioned — and the test again pins the
+    // APPROVED configuration at the same strength: sync OFF, the
+    // registered container retained for a future version. It fails
+    // if the flag, the container, or the explicit local fallback
+    // ever drifts.
+    func testCloudKitDisabledMatchesApprovedConfiguration() {
+        XCTAssertFalse(AppConfig.cloudKitSyncEnabled,
+                       "CloudKit sync is disabled for the local-only initial release per the owner's 2026-11-11 decision")
         XCTAssertEqual(AppConfig.iCloudContainerID, "iCloud.com.xenon-media.petcare360",
                        "The container must be the owner's registered container, exactly")
     }
