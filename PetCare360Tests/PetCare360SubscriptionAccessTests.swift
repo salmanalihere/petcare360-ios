@@ -231,3 +231,130 @@ final class PetCare360SubscriptionAccessTests: XCTestCase {
         }
     }
 }
+
+/// Restore Purchases lifecycle tests (2026-11-10). StoreKit's
+/// `AppStore.sync()` cannot be driven from this target, so the
+/// lifecycle is tested at its decision core: every combination of
+/// the run's facts (sync result, cancellation, refresh
+/// verification, refreshed access) must land on exactly one
+/// terminal `RestoreOutcome` with the right user-facing copy.
+/// The precedence rules are the point: cancellation beats
+/// everything, a sync failure is never masked by access that was
+/// already on screen, and an unverifiable entitlement refresh is
+/// never reported as a success or as "no purchases".
+final class PetCare360RestoreOutcomeTests: XCTestCase {
+
+    private let activeState = SubscriptionAccessState.active(
+        productID: PremiumProduct.monthly,
+        expirationDate: Date(timeIntervalSince1970: 1_800_086_400),
+        isTrialPeriod: false, willAutoRenew: true, inGracePeriod: false)
+
+    func testRestoredWhenSyncSucceedsAndVerifiedAccessIsActive() {
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: true, cancelled: false, refreshVerified: true,
+            accessState: activeState)
+        XCTAssertEqual(outcome, .restored)
+        XCTAssertEqual(outcome.message, "Purchases restored successfully.")
+        XCTAssertFalse(outcome.isFailure)
+    }
+
+    func testRestoredInGracePeriodWhenAccessActiveButPaymentRetrying() {
+        // Billing grace period: Apple could not collect the last
+        // payment and is retrying, but the entitlement — and
+        // therefore Premium access — is still fully active. The
+        // restore must succeed AND surface the billing warning,
+        // not collapse into a plain success or a failure.
+        let graceState = SubscriptionAccessState.active(
+            productID: PremiumProduct.monthly,
+            expirationDate: Date(timeIntervalSince1970: 1_800_086_400),
+            isTrialPeriod: false, willAutoRenew: true, inGracePeriod: true)
+        XCTAssertTrue(graceState.hasAccess, "Grace period must preserve Premium access")
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: true, cancelled: false, refreshVerified: true,
+            accessState: graceState)
+        XCTAssertEqual(outcome, .restoredInGracePeriod)
+        XCTAssertEqual(outcome.message, "Purchases restored successfully. Apple could not collect your last payment and is retrying it — update your payment method in your Apple ID subscription settings to keep your access.")
+        XCTAssertFalse(outcome.isFailure)
+    }
+
+    func testNoActivePurchaseWhenVerifiedRefreshFindsNoAccess() {
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: true, cancelled: false, refreshVerified: true,
+            accessState: .inactive(billingIssue: false))
+        XCTAssertEqual(outcome, .noActivePurchase)
+        XCTAssertTrue(outcome.message.contains("No active purchases were found"))
+        XCTAssertFalse(outcome.isFailure)
+    }
+
+    func testBillingIssueIsDistinctFromNoPurchase() {
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: true, cancelled: false, refreshVerified: true,
+            accessState: .inactive(billingIssue: true))
+        XCTAssertEqual(outcome, .billingIssue)
+        XCTAssertTrue(outcome.message.contains("billing problem"))
+        XCTAssertFalse(outcome.isFailure)
+    }
+
+    func testCancellationTakesPrecedenceOverSyncFailureAndExistingAccess() {
+        // The user cancelled Apple's prompt: sync did not succeed
+        // and an entitlement was already active on screen — the
+        // outcome must still be the cancellation, nothing else.
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: false, cancelled: true, refreshVerified: false,
+            accessState: activeState)
+        XCTAssertEqual(outcome, .cancelled)
+        XCTAssertFalse(outcome.isFailure)
+    }
+
+    func testSyncFailureIsNeverMaskedByExistingAccess() {
+        // Premium was already accessible before the restore: a
+        // throwing sync must NOT be reported as a restoration.
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: false, cancelled: false, refreshVerified: false,
+            accessState: activeState)
+        XCTAssertEqual(outcome, .syncFailed)
+        XCTAssertTrue(outcome.isFailure)
+    }
+
+    func testUnverifiedRefreshIsNeverReportedAsRestored() {
+        // Sync completed and access is active from an earlier read,
+        // but THIS run's refresh could not be verified — claiming
+        // "restored" would be unproven.
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: true, cancelled: false, refreshVerified: false,
+            accessState: activeState)
+        XCTAssertEqual(outcome, .verificationFailed)
+        XCTAssertTrue(outcome.isFailure)
+    }
+
+    func testUnverifiedRefreshIsNeverReportedAsNoPurchases() {
+        // The same unverifiable refresh with no access on screen
+        // must not claim the Apple ID has no purchases — that is
+        // exactly what could not be read.
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: true, cancelled: false, refreshVerified: false,
+            accessState: .inactive(billingIssue: false))
+        XCTAssertEqual(outcome, .verificationFailed)
+        XCTAssertTrue(outcome.isFailure)
+    }
+
+    func testEveryOutcomeHasUserFacingCopy() {
+        let outcomes: [RestoreOutcome] = [.restored, .restoredInGracePeriod, .noActivePurchase,
+                                          .billingIssue, .cancelled, .syncFailed, .verificationFailed]
+        for outcome in outcomes {
+            XCTAssertFalse(outcome.message.isEmpty, "\(outcome) must have user-facing copy")
+        }
+        XCTAssertEqual(RestoreOutcome.restored.message, "Purchases restored successfully.")
+        XCTAssertTrue(RestoreOutcome.noActivePurchase.message.contains("No active purchases were found"))
+    }
+
+    /// The restore state machine starts idle: no run in flight and
+    /// no outcome, so no stale result can be on screen before the
+    /// user has ever restored. (Mirrors the StoreManager pattern in
+    /// PetCare360PremiumTests.)
+    func testStoreStartsWithNoRestoreInFlightAndNoOutcome() {
+        let store = StoreManager()
+        XCTAssertFalse(store.isRestoring)
+        XCTAssertNil(store.restoreOutcome)
+    }
+}

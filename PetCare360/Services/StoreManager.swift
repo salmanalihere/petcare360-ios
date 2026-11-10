@@ -68,6 +68,23 @@ final class StoreManager: ObservableObject {
     /// purchase. Access is never affected by this flag.
     @Published private(set) var purchaseInFlight = false
 
+    /// True while a Restore Purchases run is in flight (the
+    /// `AppStore.sync()` await plus the entitlement refresh that
+    /// follows it). Restore buttons disable and show their
+    /// restoring state from this flag, and `restorePurchases`
+    /// refuses to start a second, overlapping run while it is set.
+    @Published private(set) var isRestoring = false
+
+    /// The terminal outcome of the most recent restore run, set
+    /// exactly once when the run finishes — success, no purchase,
+    /// billing issue, cancellation, sync failure, or unverifiable
+    /// refresh. Nil until the first restore completes. Restore
+    /// surfaces render this outcome's message; the shared
+    /// purchaseError/infoMessage are deliberately NOT used for
+    /// restore results, so a restore can never be masked by — or
+    /// mask — a purchase message.
+    @Published private(set) var restoreOutcome: RestoreOutcome? = nil
+
     private var accessDescription: String {
         switch accessState {
         case .unknown: return "unknown"
@@ -220,18 +237,65 @@ final class StoreManager: ObservableObject {
         }
     }
 
+    /// Restore Purchases: synchronize with the App Store, then
+    /// re-read the verified entitlements and publish exactly one
+    /// terminal `RestoreOutcome`. Access is decided ONLY by the
+    /// refreshed verified entitlements — a completed sync by
+    /// itself never unlocks anything. Overlapping runs are
+    /// refused: a second `AppStore.sync()` stacked on the first
+    /// would double Apple's authentication prompts and race the
+    /// outcome.
     func restorePurchases() async {
-        purchaseError = nil
-        infoMessage = nil
+        guard !isRestoring else {
+            Self.log.error("restore.begin REFUSED: a restore is already in progress")
+            return
+        }
+        isRestoring = true
+        restoreOutcome = nil
+        defer { isRestoring = false }
+        Self.log.info("restore.begin — awaiting AppStore.sync() (Apple authentication prompt may present)")
+
+        var syncSucceeded = false
+        var cancelled = false
         do {
             try await AppStore.sync()
-            await refreshEntitlements()
-            if !isPremium {
-                infoMessage = "No active subscription was found for this Apple ID."
-            }
+            syncSucceeded = true
+            Self.log.info("restore.syncCompleted — refreshing verified entitlements")
         } catch {
-            purchaseError = "Restore did not complete. Please check your connection and try again."
+            cancelled = Self.isSyncCancellation(error)
+            Self.log.error("restore.syncFailed cancelled \(cancelled) error \(error.localizedDescription, privacy: .public)")
         }
+
+        // Entitlements are refreshed ONLY after a completed sync.
+        // `refreshVerified` distinguishes a refresh that genuinely
+        // read Apple's data from one that could not — the latter
+        // must surface as verificationFailed, never as a success
+        // or as "no purchases".
+        var refreshVerified = false
+        if syncSucceeded {
+            refreshVerified = await refreshEntitlements()
+        }
+
+        let outcome = RestoreOutcomeResolver.resolve(
+            syncSucceeded: syncSucceeded,
+            cancelled: cancelled,
+            refreshVerified: refreshVerified,
+            accessState: accessState)
+        restoreOutcome = outcome
+        Self.log.info("restore.finished outcome \(String(describing: outcome), privacy: .public) access \(self.accessDescription, privacy: .public)")
+    }
+
+    /// Whether an error thrown by `AppStore.sync()` represents the
+    /// user cancelling Apple's authentication prompt rather than a
+    /// genuine failure. Cancellation leaves any existing access
+    /// untouched and is reported as its own outcome.
+    private static func isSyncCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let storeKitError = error as? StoreKitError,
+           case .userCancelled = storeKitError { return true }
+        let nsError = error as NSError
+        return nsError.domain == SKErrorDomain
+            && nsError.code == SKError.Code.paymentCancelled.rawValue
     }
 
     /// Rebuilds the access decision from Apple-verified data only.
@@ -239,19 +303,35 @@ final class StoreManager: ObservableObject {
     /// purchases and restores, and for every transaction update
     /// (renewals, trial conversion, expiry, revocation, billing
     /// state changes).
-    func refreshEntitlements() async {
+    ///
+    /// Returns whether the refreshed picture is VERIFIED. It is
+    /// false only when the subscription-status read failed AND no
+    /// verified entitlement could be read from
+    /// `Transaction.currentEntitlements` either — in that case "no
+    /// purchases" and "could not read Apple's data" are
+    /// indistinguishable, and a caller reporting an outcome
+    /// (Restore Purchases) must claim neither. The access decision
+    /// itself is computed exactly as before; other callers may
+    /// ignore the result.
+    @discardableResult
+    func refreshEntitlements() async -> Bool {
         var snapshots: [SubscriptionEntitlementSnapshot] = []
         var seen: Set<String> = []
+        var statusReadFailed = false
 
         // Richest signal first: the subscription group's statuses
         // carry the renewal info (grace period, billing retry,
         // auto-renew) alongside each verified transaction.
-        if let statuses = try? await Product.SubscriptionInfo.status(for: AppConfig.subscriptionGroupID) {
+        do {
+            let statuses = try await Product.SubscriptionInfo.status(for: AppConfig.subscriptionGroupID)
             for status in statuses {
                 guard let transaction = try? checkVerified(status.transaction) else { continue }
                 snapshots.append(snapshot(for: transaction, status: status))
                 seen.insert(transaction.productID)
             }
+        } catch {
+            statusReadFailed = true
+            Self.log.error("entitlements.statusReadFailed error \(error.localizedDescription, privacy: .public) — falling back to currentEntitlements only")
         }
         // Any current entitlement the statuses did not cover.
         for await result in Transaction.currentEntitlements {
@@ -269,6 +349,9 @@ final class StoreManager: ObservableObject {
         }).intersection(Set(PremiumProduct.all))
         accessState = SubscriptionAccessPolicy.resolve(snapshots: snapshots, now: Date())
         Self.log.info("entitlements.refreshed snapshots \(snapshots.count) purchasedIDs \(self.purchasedProductIDs.sorted().joined(separator: ","), privacy: .public) access \(self.accessDescription, privacy: .public)")
+        // Verified when the status read succeeded, or when verified
+        // entitlements were actually read despite its failure.
+        return !statusReadFailed || !snapshots.isEmpty
     }
 
     private func snapshot(for transaction: Transaction,

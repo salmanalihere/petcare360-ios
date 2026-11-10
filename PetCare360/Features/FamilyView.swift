@@ -493,12 +493,22 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(PCColor.secondaryText)
                 }
                 Button("Premium Subscription") { showPaywall = true }
-                Button("Restore Purchases") { Task { await store.restorePurchases() } }
+                Button { Task { await store.restorePurchases() } } label: {
+                    HStack(spacing: 6) {
+                        if store.isRestoring { ProgressView().controlSize(.small) }
+                        Text(store.isRestoring ? "Restoring..." : "Restore Purchases")
+                    }
+                }
+                .disabled(store.isRestoring)
                 if let info = store.infoMessage {
                     Text(info).font(.caption).foregroundStyle(PCColor.secondaryText)
                 }
                 if let error = store.purchaseError {
                     Text(error).font(.caption).foregroundStyle(PCColor.errorRed)
+                }
+                if let outcome = store.restoreOutcome {
+                    Text(outcome.message).font(.caption)
+                        .foregroundStyle(outcome.isFailure ? PCColor.errorRed : PCColor.secondaryText)
                 }
             }
             Section("Personalize & Family") {

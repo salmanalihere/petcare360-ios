@@ -137,9 +137,19 @@ struct SubscriptionGateView: View {
                 if let info = store.infoMessage {
                     Text(info).font(.subheadline).foregroundStyle(PCColor.secondaryText)
                 }
+                if let outcome = store.restoreOutcome {
+                    Text(outcome.message).font(.subheadline)
+                        .foregroundStyle(outcome.isFailure ? PCColor.errorRed : PCColor.secondaryText)
+                }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Button("Restore Purchases") { Task { await store.restorePurchases() } }
+                    Button { Task { await store.restorePurchases() } } label: {
+                        HStack(spacing: 6) {
+                            if store.isRestoring { ProgressView().controlSize(.small) }
+                            Text(store.isRestoring ? "Restoring..." : "Restore Purchases")
+                        }
+                    }
+                    .disabled(store.isRestoring)
                         .font(.subheadline.bold())
                     Link("Manage Subscription", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
                         .font(.subheadline)

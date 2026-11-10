@@ -140,8 +140,18 @@ struct PaywallView: View {
                     if let info = store.infoMessage {
                         Text(info).font(.subheadline).foregroundStyle(PCColor.secondaryText)
                     }
+                    if let outcome = store.restoreOutcome {
+                        Text(outcome.message).font(.subheadline)
+                            .foregroundStyle(outcome.isFailure ? PCColor.errorRed : PCColor.secondaryText)
+                    }
                     HStack(spacing: 16) {
-                        Button("Restore Purchases") { Task { await store.restorePurchases() } }
+                        Button { Task { await store.restorePurchases() } } label: {
+                            HStack(spacing: 6) {
+                                if store.isRestoring { ProgressView().controlSize(.small) }
+                                Text(store.isRestoring ? "Restoring..." : "Restore Purchases")
+                            }
+                        }
+                        .disabled(store.isRestoring)
                         Link("Privacy Policy", destination: AppConfig.privacyPolicyURL)
                         Link("Terms of Use", destination: AppConfig.termsOfUseURL)
                     }
