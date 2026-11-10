@@ -26,7 +26,7 @@ struct RecordsView: View {
                         Section("Medical Passport") {
                             NavigationLink("Records & timeline") { MedicalTimelineView(pet: pet) }
                             NavigationLink("Vaccinations") { VaccinationsView(pet: pet) }
-                            NavigationLink("Documents & scanner") { DocumentsView(pet: pet) }
+                            NavigationLink("Documents") { DocumentsView(pet: pet) }
                             NavigationLink("Appointments & visit prep") { AppointmentsView(pet: pet) }
                         }
                         Section("Health") {

@@ -3,14 +3,14 @@
 **Tagline:** A healthier life together.
 
 Premium native iOS app for pet health and daily care — SwiftUI, SwiftData,
-StoreKit 2, Vision (on-device OCR), PDFKit, UserNotifications and Swift Charts.
+StoreKit 2, PDFKit, UserNotifications and Swift Charts.
 iPhone only, iOS 17+, bundle ID placeholder `com.xenon-media.petcare360`.
 
 ## The five tabs
 1. **Home** — greeting, pet summary, today's care progress, upcoming medication
    (overdue shown distinctly), next vet appointment, upcoming vaccinations,
    recent observations, latest care handoff, one-tap emergency access.
-2. **Pets** — unlimited profiles with Premium (free plan: 1 pet): photo, species
+2. **Pets** — unlimited profiles with Premium (subscription required): photo, species
    (dog/cat/bird/rabbit/other), breed, DOB with age calculation, gender, weight,
    color, microchip, adoption date, allergies, conditions, vet clinic, emergency
    contact, insurance info, notes. Edit, archive, delete.
@@ -23,8 +23,8 @@ iPhone only, iOS 17+, bundle ID placeholder `com.xenon-media.petcare360`.
    appointments + Visit Preparation PDF, health timeline + Swift Charts weight
    history, expenses (Decimal-exact, PDF report), insurance organizer with claim
    statuses, FDA recall section (official source only — no invented recalls),
-   lost-pet profile + poster PDF, on-device Vision document scanner with
-   review-before-save.
+   lost-pet profile + poster PDF, document storage with photo and file
+   uploads.
 5. **Family** — household members with roles (Owner / Family / Pet Sitter /
    Dog Walker / Viewer) and a permission matrix, invitations with temporary
    access expiry, handoff history, Emergency Mode + owner-controlled QR

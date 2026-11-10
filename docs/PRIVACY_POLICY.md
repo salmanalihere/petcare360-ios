@@ -7,10 +7,10 @@ PetCare 360 is designed to keep your pet's information private.
   iCloud account, controlled by Apple and by you.
 - **No tracking, no analytics, no advertising.** The app contains no
   third-party trackers or SDKs.
-- **Document scanning** runs entirely on your device using Apple's Vision
-  framework. Scanned images are never uploaded.
-- **Photos and camera** are accessed only when you choose a photo or scan a
-  document. **Notifications** are local and only sent if you enable reminders.
+- **Documents and photos** you attach are stored exactly as you added
+  them, on your device (and your private iCloud, if enabled). The app does
+  not scan, read or upload their contents.
+- **Photos and files** are accessed only when you choose to attach them. **Notifications** are local and only sent if you enable reminders.
 - **Emergency QR profile:** you choose exactly which fields are encoded; it is
   off by default and can be revoked at any time. No home address is ever included.
 - **Sharing:** PDFs and backups are created only when you tap Export/Share.

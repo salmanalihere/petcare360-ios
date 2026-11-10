@@ -405,15 +405,14 @@ final class PetCare360UITests: XCTestCase {
         }
     }
 
-    func testScannerReviewJourney() {
+    func testDocumentsJourney() {
         app.tabBars.buttons["Records"].tap()
-        let documentsLink = app.staticTexts["Documents & scanner"]
+        let documentsLink = app.staticTexts["Documents"]
         if documentsLink.waitForExistence(timeout: 3) {
             documentsLink.tap()
-            // On the Simulator the document camera is unsupported; the
-            // photo-library path and the review-before-save rule are what
-            // this journey can verify there. Camera capture itself needs a
-            // physical iPhone (see TEST_REPORT.md).
+            // Documents are added manually (photo library / file
+            // upload) since the scanner was removed; this journey
+            // verifies the Documents screen opens from Records.
             XCTAssertTrue(app.staticTexts["Documents"].waitForExistence(timeout: 3))
         }
     }
