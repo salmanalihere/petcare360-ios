@@ -15,8 +15,14 @@ struct AppIconOption: Identifiable, Equatable {
     let alternateName: String?
     let previewImageName: String
 
+    /// The primary icon (the asset catalog's AppIcon): the only
+    /// option whose alternateName is nil, and the fallback the
+    /// pickers display when the stored selection names an icon
+    /// this build no longer ships.
+    static let primary = AppIconOption(id: "dogcat", label: "Dog and Cat", alternateName: nil, previewImageName: "IconPreviewDogCat")
+
     static let all: [AppIconOption] = [
-        AppIconOption(id: "dogcat", label: "Dog and Cat", alternateName: nil, previewImageName: "IconPreviewDogCat"),
+        primary,
         AppIconOption(id: "dog", label: "Dog", alternateName: "AppIconDog", previewImageName: "IconPreviewDog"),
         AppIconOption(id: "cat", label: "Cat", alternateName: "AppIconCat", previewImageName: "IconPreviewCat"),
         AppIconOption(id: "bird", label: "Bird", alternateName: "AppIconBird", previewImageName: "IconPreviewBird"),
@@ -30,6 +36,32 @@ struct AppIconOption: Identifiable, Equatable {
 enum AppIconService {
     static var supportsAlternateIcons: Bool { UIApplication.shared.supportsAlternateIcons }
     static var currentAlternateName: String? { UIApplication.shared.alternateIconName }
+
+    /// Resolves a STORED alternate-icon name to the option the
+    /// pickers should treat as current: the matching option when
+    /// the name is still supported by this build, and the PRIMARY
+    /// option when there is no stored name or the stored name is
+    /// unknown — e.g. "AppIconReptile", retired in favour of
+    /// "AppIconTurtle". iOS persists selections by name across app
+    /// updates and itself falls back to displaying the primary
+    /// icon when the stored name no longer exists in the bundle;
+    /// the pickers mirror that fallback so exactly one option
+    /// — the primary — shows as Current instead of none.
+    /// Pure and side-effect free: resolving NEVER changes the
+    /// actual icon; the stored name is left exactly as iOS holds
+    /// it until the user explicitly picks an icon (see setIcon).
+    static func resolvedCurrentOption(forStoredName storedName: String?) -> AppIconOption {
+        guard let storedName else { return .primary }
+        return AppIconOption.all.first { $0.alternateName == storedName } ?? .primary
+    }
+
+    /// The alternate-icon name the pickers display as current:
+    /// `resolvedCurrentOption` applied to the live stored name.
+    /// Both pickers read this (never the raw stored name), so the
+    /// Settings and onboarding pickers can never disagree.
+    static var displayAlternateName: String? {
+        resolvedCurrentOption(forStoredName: currentAlternateName).alternateName
+    }
 
     /// Applies the icon through the real system API. iOS shows its
     /// own confirmation alert for icon changes — that is expected
@@ -116,7 +148,7 @@ struct AppIconPickerSection: View {
         .onAppear {
             guard !loaded else { return }
             loaded = true
-            currentName = AppIconService.currentAlternateName
+            currentName = AppIconService.displayAlternateName
         }
         .alert("Couldn't change icon", isPresented: Binding(get: { !errorMessage.isEmpty }, set: { if !$0 { errorMessage = "" } })) {
             Button("OK", role: .cancel) {}
@@ -142,7 +174,7 @@ struct AppIconPickerSection: View {
             if let error {
                 errorMessage = error
             } else {
-                currentName = AppIconService.currentAlternateName
+                currentName = AppIconService.displayAlternateName
             }
         }
     }

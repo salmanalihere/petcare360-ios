@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import PetCare360
 
 /// Regression tests for the approved fix batch (2026-11-10):
@@ -524,5 +525,89 @@ final class PetCare360ApprovedFixesTests: XCTestCase {
                 }
             }
         }
+    }
+
+    // MARK: Notification content — no per-notification icon or imagery
+
+    /// The icon on a delivered notification is rendered by iOS from
+    /// the app's CURRENTLY SELECTED app icon (primary or alternate);
+    /// the app must never attach imagery of its own to notification
+    /// content — an attachment is the only way species or
+    /// alternate-icon artwork could end up on a banner. Every
+    /// notification the app sends is built by
+    /// NotificationService.makeContent; pin that contract here.
+    func testNotificationContentCarriesNoAttachmentsOrImagery() {
+        let content = NotificationService.makeContent(title: "Milo's medication",
+                                                      body: "Time for Milo's dose.",
+                                                      soundName: nil)
+        XCTAssertEqual(content.title, "Milo's medication")
+        XCTAssertEqual(content.body, "Time for Milo's dose.")
+        XCTAssertTrue(content.attachments.isEmpty,
+                      "Notification content must never carry attachments — iOS supplies the banner icon from the selected app icon")
+        XCTAssertTrue(content.userInfo.isEmpty)
+        XCTAssertTrue(content.categoryIdentifier.isEmpty)
+        XCTAssertNotNil(content.sound,
+                        "A nil sound name must fall back to the system default sound")
+    }
+
+    func testNotificationContentWithCustomSoundStillCarriesNoImagery() {
+        let content = NotificationService.makeContent(title: "Vet appointment",
+                                                      body: "Appointment in 30 minutes.",
+                                                      soundName: "petcare-dog.wav")
+        XCTAssertEqual(content.title, "Vet appointment")
+        XCTAssertTrue(content.attachments.isEmpty)
+        XCTAssertNotNil(content.sound)
+    }
+
+    // MARK: App icon — stale stored name resolves to Primary for display
+
+    /// The pickers share one rule (AppIconService.resolvedCurrent
+    /// Option): a stored alternate-icon name this build no longer
+    /// supports — e.g. the retired "AppIconReptile" —
+    /// displays as the PRIMARY icon, which is also the icon iOS
+    /// itself falls back to showing, instead of leaving nothing
+    /// marked Current. Resolution is display-only: it never
+    /// changes the stored selection, which only an explicit tap
+    /// may do (setIcon). Both pickers read the same
+    /// displayAlternateName, so they cannot disagree.
+    func testResolvedCurrentOptionForNilStoredNameIsPrimary() {
+        let resolved = AppIconService.resolvedCurrentOption(forStoredName: nil)
+        XCTAssertEqual(resolved, AppIconOption.primary)
+        XCTAssertNil(resolved.alternateName)
+    }
+
+    func testResolvedCurrentOptionMatchesEverySupportedStoredName() {
+        for option in AppIconOption.all {
+            XCTAssertEqual(AppIconService.resolvedCurrentOption(forStoredName: option.alternateName), option,
+                           "Stored name \(option.alternateName ?? "nil") must resolve to the \(option.label) option")
+        }
+        XCTAssertEqual(AppIconOption.all.count, 8, "All eight bundled options remain available")
+    }
+
+    func testResolvedCurrentOptionForRetiredReptileNameIsPrimary() {
+        let resolved = AppIconService.resolvedCurrentOption(forStoredName: "AppIconReptile")
+        XCTAssertEqual(resolved, AppIconOption.primary,
+                       "A persisted AppIconReptile selection must display as Primary (Dog and Cat)")
+        XCTAssertNil(resolved.alternateName)
+    }
+
+    func testResolvedCurrentOptionForAnyUnknownNameIsPrimary() {
+        XCTAssertEqual(AppIconService.resolvedCurrentOption(forStoredName: "AppIconDoesNotExist"), AppIconOption.primary)
+        XCTAssertEqual(AppIconService.resolvedCurrentOption(forStoredName: ""), AppIconOption.primary)
+    }
+
+    func testTurtleSelectionResolvesToTurtle() {
+        let resolved = AppIconService.resolvedCurrentOption(forStoredName: "AppIconTurtle")
+        XCTAssertEqual(resolved.id, "turtle")
+        XCTAssertEqual(resolved.alternateName, "AppIconTurtle")
+    }
+
+    func testCatSelectionAfterTurtleResolvesToCat() {
+        // Resolution follows whatever name iOS has stored after the
+        // user's latest explicit pick: Turtle first, then Cat
+        // — the second pick must win, with no trace of the first.
+        XCTAssertEqual(AppIconService.resolvedCurrentOption(forStoredName: "AppIconTurtle").id, "turtle")
+        XCTAssertEqual(AppIconService.resolvedCurrentOption(forStoredName: "AppIconCat").id, "cat")
+        XCTAssertEqual(AppIconService.resolvedCurrentOption(forStoredName: "AppIconCat").alternateName, "AppIconCat")
     }
 }

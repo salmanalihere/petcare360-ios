@@ -224,7 +224,7 @@ struct OnboardingIconPage: View {
         .onAppear {
             guard !loaded else { return }
             loaded = true
-            currentName = AppIconService.currentAlternateName
+            currentName = AppIconService.displayAlternateName
         }
         .alert("Couldn't change icon", isPresented: Binding(get: { !errorMessage.isEmpty }, set: { if !$0 { errorMessage = "" } })) {
             Button("OK", role: .cancel) {}
@@ -246,7 +246,7 @@ struct OnboardingIconPage: View {
             if let error {
                 errorMessage = error
             } else {
-                currentName = AppIconService.currentAlternateName
+                currentName = AppIconService.displayAlternateName
             }
         }
     }

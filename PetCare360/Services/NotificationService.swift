@@ -192,7 +192,18 @@ final class NotificationService {
         identifiers.filter { id in prefixes.contains { id.hasPrefix($0) } }
     }
 
-    private func schedule(id: String, title: String, body: String, fireDate: Date, repeatsDaily: Bool = false, soundName: String? = nil) {
+    /// THE notification content factory — the ONLY place in the
+    /// app where notification content is built (the schedule
+    /// funnel and the Settings test notification both come through
+    /// here), so the content contract lives in exactly one spot:
+    /// title, body and sound, and NOTHING else. In particular,
+    /// content NEVER carries attachments or other imagery: iOS
+    /// renders a notification's icon from the app's currently
+    /// selected app icon (primary or alternate) itself, and there
+    /// is no supported per-notification icon — so no pet-species
+    /// or alternate-icon artwork can ever be attached here. The
+    /// regression tests in PetCare360ApprovedFixesTests pin this.
+    static func makeContent(title: String, body: String, soundName: String?) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -201,6 +212,11 @@ final class NotificationService {
         // System sound/permission settings always win — this app
         // cannot (and does not try to) force a sound to play.
         content.sound = soundName.map { UNNotificationSound(named: UNNotificationSoundName(rawValue: $0)) } ?? .default
+        return content
+    }
+
+    private func schedule(id: String, title: String, body: String, fireDate: Date, repeatsDaily: Bool = false, soundName: String? = nil) {
+        let content = Self.makeContent(title: title, body: body, soundName: soundName)
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
         let dailyComps = Calendar.current.dateComponents([.hour, .minute], from: fireDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: repeatsDaily ? dailyComps : comps, repeats: repeatsDaily)
@@ -846,11 +862,10 @@ final class NotificationService {
     /// ~5 seconds out, using the sound that a reminder for the given
     /// pet species would actually use right now.
     func scheduleTestNotification(species: PetSpecies?) {
-        let content = UNMutableNotificationContent()
-        content.title = "PetCare 360 test notification"
-        content.body = "This is the sound your reminders will use."
         let soundName = NotificationSoundPreferences.resolvedFileName(species: species)
-        content.sound = soundName.map { UNNotificationSound(named: UNNotificationSoundName(rawValue: $0)) } ?? .default
+        let content = Self.makeContent(title: "PetCare 360 test notification",
+                                       body: "This is the sound your reminders will use.",
+                                       soundName: soundName)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
         let request = UNNotificationRequest(identifier: Self.pendingIdentifier(for: "test-\(UUID().uuidString)"), content: content, trigger: trigger)
         operations.submit { done in
