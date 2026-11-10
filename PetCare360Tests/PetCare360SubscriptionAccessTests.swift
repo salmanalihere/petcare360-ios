@@ -230,6 +230,83 @@ final class PetCare360SubscriptionAccessTests: XCTestCase {
             XCTAssertFalse(SubscriptionAccessPolicy.resolve(snapshots: snapshots, now: now).hasAccess)
         }
     }
+
+    // MARK: Trial end date — Apple's date passes through untouched
+
+    /// The app computes NO trial dates of its own: the end of a
+    /// free trial is the expirationDate of Apple's verified
+    /// transaction, which already encodes the trial's start plus
+    /// the duration configured in App Store Connect (7 days).
+    /// These tests pin the policy's part of that contract: given a
+    /// trial entitlement running Nov 10 → Nov 17, 2026, the
+    /// resolved state must carry Nov 17 EXACTLY (the date the
+    /// Family and Paywall screens display), in any timezone, and
+    /// an earlier-dated entitlement in the same data must never
+    /// shadow it.
+    private func trialWeek(timeZoneID: String) throws -> (start: Date, end: Date) {
+        let timeZone = try XCTUnwrap(TimeZone(identifier: timeZoneID))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 9)))
+        let end = try XCTUnwrap(calendar.date(byAdding: .day, value: 7, to: start))
+        let endParts = calendar.dateComponents([.year, .month, .day], from: end)
+        XCTAssertEqual(endParts.year, 2026)
+        XCTAssertEqual(endParts.month, 11)
+        XCTAssertEqual(endParts.day, 17, "Nov 10 + 7 calendar days must land on Nov 17 in \(timeZoneID)")
+        return (start, end)
+    }
+
+    func testSevenDayTrialStartingNov102026EndsNov17InEveryTimezone() throws {
+        for timeZoneID in ["UTC", "Asia/Kolkata", "America/Los_Angeles", "Pacific/Kiritimati"] {
+            let week = try trialWeek(timeZoneID: timeZoneID)
+            let state = SubscriptionAccessPolicy.resolve(
+                snapshots: [snapshot(expiration: week.end, introductory: true, freeTrialOffer: true)],
+                now: week.start)
+            XCTAssertEqual(state,
+                           .active(productID: PremiumProduct.monthly,
+                                   expirationDate: week.end,
+                                   isTrialPeriod: true,
+                                   willAutoRenew: true,
+                                   inGracePeriod: false),
+                           "The displayed trial end must be the entitlement's own Nov 17 in \(timeZoneID) — never shifted, never shortened")
+        }
+    }
+
+    func testLaterTrialEndWinsOverEarlierEntitlement() throws {
+        let week = try trialWeek(timeZoneID: "UTC")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let nov11 = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 11, hour: 9)))
+        let state = SubscriptionAccessPolicy.resolve(
+            snapshots: [
+                snapshot(productID: PremiumProduct.yearly, expiration: nov11),
+                snapshot(expiration: week.end, introductory: true, freeTrialOffer: true),
+            ],
+            now: week.start)
+        XCTAssertEqual(state,
+                       .active(productID: PremiumProduct.monthly,
+                               expirationDate: week.end,
+                               isTrialPeriod: true,
+                               willAutoRenew: true,
+                               inGracePeriod: false),
+                       "When a Nov 17 trial entitlement exists, an earlier Nov 11 date in the data must not be the one displayed")
+    }
+
+    func testTrialStaysActiveUntilItsExactEndInstant() throws {
+        let week = try trialWeek(timeZoneID: "UTC")
+        let trial = snapshot(expiration: week.end, introductory: true, freeTrialOffer: true)
+        let justBefore = SubscriptionAccessPolicy.resolve(
+            snapshots: [trial], now: week.end.addingTimeInterval(-60))
+        XCTAssertEqual(justBefore,
+                       .active(productID: PremiumProduct.monthly,
+                               expirationDate: week.end,
+                               isTrialPeriod: true,
+                               willAutoRenew: true,
+                               inGracePeriod: false))
+        let atEnd = SubscriptionAccessPolicy.resolve(snapshots: [trial], now: week.end)
+        XCTAssertEqual(atEnd, .inactive(billingIssue: false),
+                       "At the end instant itself the trial period is over — no extra day is granted")
+    }
 }
 
 /// Restore Purchases lifecycle tests (2026-11-10). StoreKit's
@@ -351,10 +428,16 @@ final class PetCare360RestoreOutcomeTests: XCTestCase {
     /// The restore state machine starts idle: no run in flight and
     /// no outcome, so no stale result can be on screen before the
     /// user has ever restored. (Mirrors the StoreManager pattern in
-    /// PetCare360PremiumTests.)
+    /// PetCare360PremiumTests.) StoreManager is MainActor-isolated,
+    /// so this test runs on the MainActor and reads the values into
+    /// locals before asserting — the assertion autoclosures then
+    /// never touch actor-isolated state.
+    @MainActor
     func testStoreStartsWithNoRestoreInFlightAndNoOutcome() {
         let store = StoreManager()
-        XCTAssertFalse(store.isRestoring)
-        XCTAssertNil(store.restoreOutcome)
+        let isRestoring = store.isRestoring
+        let restoreOutcome = store.restoreOutcome
+        XCTAssertFalse(isRestoring)
+        XCTAssertNil(restoreOutcome)
     }
 }
